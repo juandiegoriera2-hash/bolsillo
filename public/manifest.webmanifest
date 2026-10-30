@@ -1,0 +1,49 @@
+{
+  "name": "Bolsillo — Finanzas personales para Venezuela",
+  "short_name": "Bolsillo",
+  "description": "Tu patrimonio en tiempo real con tasas BCV, paralelo y USDT P2P. Asistente de IA por texto o voz, OCR de comprobantes, presupuestos flexibles, deudas y metas indexadas.",
+  "id": "/",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#0b0c10",
+  "theme_color": "#0b0c10",
+  "lang": "es-VE",
+  "dir": "ltr",
+  "categories": ["finance", "productivity", "utilities"],
+  "icons": [
+    {
+      "src": "/icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icons/icon-maskable-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "Asistente IA",
+      "short_name": "Asistente",
+      "description": "Registrar movimientos con lenguaje natural",
+      "url": "/?view=assistant"
+    },
+    {
+      "name": "Escanear comprobante",
+      "short_name": "Escanear",
+      "description": "OCR de Pago Móvil y transferencias",
+      "url": "/?view=scanner"
+    }
+  ]
+}

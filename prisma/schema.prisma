@@ -1,0 +1,213 @@
+// Bolsillo — Finanzas personales para Venezuela
+// Prisma schema (SQLite: enums simulados con String + validación en app)
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// ─────────────────────────────────────────────────────────────────
+// Catálogo
+// ─────────────────────────────────────────────────────────────────
+
+model Account {
+  id            String   @id @default(cuid())
+  name          String
+  type          String   @default("BANK") // BANK | CASH | WALLET | CRYPTO
+  currency      String   @default("VES") // VES | USD | USDT | EUR
+  initialBalance Float   @default(0)
+  color         String   @default("#10b981")
+  icon          String   @default("wallet")
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  transactions      Transaction[]
+  transfersTo       Transaction[]  @relation("TransferTo")
+  exchangesFrom     CurrencyExchange[] @relation("ExchangeFrom")
+  exchangesTo       CurrencyExchange[] @relation("ExchangeTo")
+}
+
+model Category {
+  id        String   @id @default(cuid())
+  name      String
+  kind      String   @default("EXPENSE") // EXPENSE | INCOME
+  icon      String   @default("circle") // lucide icon key
+  color     String   @default("#f59e0b")
+  isDefault Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  transactions Transaction[]
+  budgets      Budget[]
+}
+
+model Tag {
+  id        String   @id @default(cuid())
+  name      String
+  color     String   @default("#a78bfa")
+  createdAt DateTime @default(now())
+
+  transactions TransactionTag[]
+}
+
+// ─────────────────────────────────────────────────────────────────
+// Movimientos
+// ─────────────────────────────────────────────────────────────────
+
+model Transaction {
+  id          String   @id @default(cuid())
+  type        String   @default("EXPENSE") // EXPENSE | INCOME | TRANSFER
+  amount      Float
+  currency    String   @default("VES") // moneda de la cuenta
+  accountId   String
+  account     Account  @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  toAccountId String?  // destino cuando type = TRANSFER
+  toAccount   Account? @relation("TransferTo", fields: [toAccountId], references: [id], onDelete: Cascade)
+  categoryId  String?
+  category    Category? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  description String?
+  reference   String? // referencia bancaria (OCR)
+  source      String   @default("MANUAL") // MANUAL | AI_CHAT | VOICE | OCR
+  rateVesUsd  Float? // tasa paralelo VES/USD al momento de registrar
+  date        DateTime @default(now())
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  tags TransactionTag[]
+}
+
+model TransactionTag {
+  transactionId String
+  tagId         String
+  transaction   Transaction @relation(fields: [transactionId], references: [id], onDelete: Cascade)
+  tag           Tag         @relation(fields: [tagId], references: [id], onDelete: Cascade)
+
+  @@id([transactionId, tagId])
+}
+
+// ─────────────────────────────────────────────────────────────────
+// Motor multimoneda
+// ─────────────────────────────────────────────────────────────────
+
+model ExchangeRate {
+  id        String   @id @default(cuid())
+  dateKey   String // yyyy-MM-dd (Caracas)
+  source    String // BCV | PARALELO | USDT_P2P
+  usd       Float // Bs por USD
+  eur       Float? // Bs por EUR
+  manual    Boolean  @default(false)
+  fetchedAt DateTime @default(now())
+
+  @@unique([dateKey, source])
+  @@index([dateKey])
+}
+
+model CurrencyExchange {
+  id           String   @id @default(cuid())
+  fromAccountId String
+  fromAccount  Account  @relation("ExchangeFrom", fields: [fromAccountId], references: [id], onDelete: Cascade)
+  toAccountId  String
+  toAccount    Account  @relation("ExchangeTo", fields: [toAccountId], references: [id], onDelete: Cascade)
+  fromCurrency String
+  toCurrency   String
+  fromAmount   Float
+  toAmount     Float
+  direction    String // SELL_FOREIGN | BUY_FOREIGN | FOREIGN_TO_FOREIGN
+  impliedRate  Float // Bs por divisa extranjera implícita (o ratio divisa-divisa)
+  marketRate   Float // tasa de mercado de referencia
+  marketSource String // BCV | PARALELO | USDT_P2P | MANUAL
+  differential Float // +/- favorable en Bs (o divisa destino si divisa-divisa)
+  date         DateTime @default(now())
+  note         String?
+  createdAt    DateTime @default(now())
+}
+
+// ─────────────────────────────────────────────────────────────────
+// Planificación
+// ─────────────────────────────────────────────────────────────────
+
+model Budget {
+  id          String   @id @default(cuid())
+  name        String
+  categoryId  String? // null = global (todos los gastos)
+  category    Category? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  tagId       String? // opcional: limitar a una etiqueta (ej. gasto hormiga)
+  limitAmount Float
+  currency    String   @default("USD") // USD (indexado) o VES
+  cycle       String   @default("MONTHLY") // WEEKLY | BIWEEKLY | MONTHLY | CUSTOM
+  customDays  Int? // para CUSTOM / mesadas
+  startDate   DateTime @default(now())
+  active      Boolean  @default(true)
+  createdAt   DateTime @default(now())
+}
+
+model Debt {
+  id          String   @id @default(cuid())
+  kind        String   @default("POR_PAGAR") // POR_PAGAR | POR_COBRAR
+  person      String
+  description String?
+  amount      Float
+  currency    String   @default("USD")
+  dueDate     DateTime?
+  status      String   @default("PENDING") // PENDING | PARTIAL | SETTLED
+  rateVesUsd  Float? // tasa al registrar
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  payments DebtPayment[]
+}
+
+model DebtPayment {
+  id        String   @id @default(cuid())
+  debtId    String
+  debt      Debt     @relation(fields: [debtId], references: [id], onDelete: Cascade)
+  amount    Float
+  note      String?
+  date      DateTime @default(now())
+}
+
+model SavingsGoal {
+  id           String   @id @default(cuid())
+  name         String
+  targetAmount Float // en divisa de la meta (USD indexado por defecto)
+  currency     String   @default("USD")
+  deadline     DateTime?
+  color        String   @default("#10b981")
+  icon         String   @default("target")
+  status       String   @default("ACTIVE") // ACTIVE | COMPLETED
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  contributions GoalContribution[]
+}
+
+model GoalContribution {
+  id        String   @id @default(cuid())
+  goalId    String
+  goal      SavingsGoal @relation(fields: [goalId], references: [id], onDelete: Cascade)
+  amount    Float // en divisa de la meta
+  note      String?
+  date      DateTime @default(now())
+}
+
+// ─────────────────────────────────────────────────────────────────
+// IA + sistema
+// ─────────────────────────────────────────────────────────────────
+
+model WeeklySummary {
+  id        String   @id @default(cuid())
+  weekStart DateTime @unique // lunes de la semana
+  content   String // markdown generado por IA
+  statsJson String // digest de estadísticas
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model AppMeta {
+  key       String   @id
+  value     String
+  updatedAt DateTime @updatedAt
+}
