@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { db } from '@/lib/db'
+import { isRecordMissing } from '@/lib/api-utils'
 import { serializeTx, TX_INCLUDE } from '@/lib/dto'
 
 type Params = { params: Promise<{ id: string }> }
@@ -58,6 +59,8 @@ export async function DELETE(_req: Request, { params }: Params) {
     await db.transaction.delete({ where: { id } })
     return NextResponse.json({ ok: true })
   } catch (e) {
+    // idempotente: si ya fue borrado, respondemos ok
+    if (isRecordMissing(e)) return NextResponse.json({ ok: true })
     console.error('[transactions DELETE]', e)
     return NextResponse.json({ error: 'Error eliminando movimiento' }, { status: 500 })
   }

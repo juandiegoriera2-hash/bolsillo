@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { db } from '@/lib/db'
+import { isRecordMissing } from '@/lib/api-utils'
 import { getRateSnapshot } from '@/lib/rates'
 import { getDebtsWithPayments } from '@/lib/queries'
 
@@ -55,6 +56,7 @@ export async function DELETE(req: Request, { params }: Params) {
     }
     return NextResponse.json({ ok: true })
   } catch (e) {
+    if (isRecordMissing(e)) return NextResponse.json({ ok: true })
     console.error('[debt payments DELETE]', e)
     return NextResponse.json({ error: 'Error' }, { status: 500 })
   }

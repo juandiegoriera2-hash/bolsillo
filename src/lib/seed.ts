@@ -525,7 +525,14 @@ async function runSeed(): Promise<void> {
   }
 }
 
-/** Borra todos los datos financieros (mantiene o restaura el demo) */
+/**
+ * Borra todos los datos financieros.
+ * - reseedDemo=false → empieza de cero: se preserva AppMeta (flag `seeded`
+ *   + preferencias del usuario) para que ensureSeed() NO vuelva a sembrar
+ *   los datos demo en el siguiente refresh.
+ * - reseedDemo=true → restaura el estado demo completo (regenera catálogos,
+ *   cuentas, movimientos y preferencias por defecto).
+ */
 export async function wipeData(reseedDemo: boolean): Promise<void> {
   await db.transactionTag.deleteMany()
   await db.transaction.deleteMany()
@@ -537,12 +544,37 @@ export async function wipeData(reseedDemo: boolean): Promise<void> {
   await db.budget.deleteMany()
   await db.weeklySummary.deleteMany()
   await db.account.deleteMany()
-  await db.category.deleteMany()
   await db.tag.deleteMany()
   await db.exchangeRate.deleteMany()
-  await db.appMeta.deleteMany()
-  seedPromise = null
+
   if (reseedDemo) {
+    // demo: se regenera todo desde cero (catálogo completo incluido)
+    await db.category.deleteMany()
+    seedPromise = null
+    await db.appMeta.deleteMany()
     await ensureSeed()
+    return
   }
+
+  // empieza de cero: conservar el catálogo base (no hay UI para recrearlo)
+  await db.category.deleteMany({ where: { isDefault: false } })
+  seedPromise = null
+
+  // mantener el flag `seeded` (evita re-siembra automática del demo) y las
+  // preferencias del usuario; crearlas solo si no existen
+  await db.appMeta.upsert({
+    where: { key: 'seeded' },
+    update: {},
+    create: { key: 'seeded', value: new Date().toISOString() },
+  })
+  await db.appMeta.upsert({
+    where: { key: 'baseCurrency' },
+    update: {},
+    create: { key: 'baseCurrency', value: 'USD' },
+  })
+  await db.appMeta.upsert({
+    where: { key: 'valuationSource' },
+    update: {},
+    create: { key: 'valuationSource', value: 'PARALELO' },
+  })
 }
