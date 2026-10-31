@@ -1,6 +1,8 @@
 import { NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import { isRecordMissing } from '@/lib/api-utils'
+import { getRateSnapshot } from '@/lib/rates'
+import { resolveEntry } from '@/lib/entry'
 import { serializeTx, TX_INCLUDE } from '@/lib/dto'
 
 type Params = { params: Promise<{ id: string }> }
@@ -13,7 +15,34 @@ export async function PATCH(req: Request, { params }: Params) {
     if (!existing) return NextResponse.json({ error: 'Movimiento no encontrado' }, { status: 404 })
 
     const data: Record<string, unknown> = {}
-    if (Number.isFinite(Number(body?.amount)) && Number(body.amount) > 0) data.amount = Number(body.amount)
+
+    // ── Monto + entrada mixta ─────────────────────────────────
+    // Si el cliente envía `currency` (moneda en la que se ingresó el
+    // monto), se re-convierte a la moneda de la cuenta. Si no, el monto
+    // se interpreta directamente en la moneda de la cuenta.
+    if (Number.isFinite(Number(body?.amount)) && Number(body.amount) > 0) {
+      const entryAmount = Number(body.amount)
+      const rates = await getRateSnapshot()
+      const conv = resolveEntry({
+        amount: entryAmount,
+        entryCurrency: body?.currency,
+        accountCurrency: existing.currency,
+        rateSource: body?.rateSource,
+        customRate: body?.customRate,
+        rates,
+      })
+      if ('error' in conv) return NextResponse.json({ error: conv.error }, { status: 400 })
+      data.amount = conv.amount
+      data.originalAmount = conv.originalAmount
+      data.originalCurrency = conv.originalCurrency
+      if (body?.rateSource) data.rateSource = conv.rateSource
+      if (conv.originalAmount != null || body?.rateSource) data.rateVesUsd = conv.rateVesUsd
+    } else if (body?.currency !== undefined) {
+      // solo cambió la moneda de entrada sin monto: limpiar conversión
+      data.originalAmount = null
+      data.originalCurrency = null
+    }
+
     if (body?.description !== undefined)
       data.description = body.description ? String(body.description).slice(0, 140) : null
     if (body?.reference !== undefined) data.reference = body.reference ? String(body.reference).slice(0, 60) : null

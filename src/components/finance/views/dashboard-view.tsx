@@ -538,6 +538,11 @@ export function DashboardView() {
                     t.type === 'EXPENSE' && 'text-foreground/90'
                   )}
                 />
+                {t.originalAmount != null && t.originalCurrency && (
+                  <p className="tnum text-[10px] text-muted-foreground">
+                    ≡ {formatMoney(t.originalAmount, t.originalCurrency as never)}
+                  </p>
+                )}
                 <div className="flex justify-end mt-0.5">
                   <TxTypeIcon type={t.type} className="opacity-60" />
                 </div>

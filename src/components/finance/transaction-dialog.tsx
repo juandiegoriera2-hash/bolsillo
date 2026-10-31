@@ -1,5 +1,8 @@
 // ─────────────────────────────────────────────────────────────────
 // Bolsillo — Diálogo de movimiento (crear / editar / confirmar OCR)
+// Entrada mixta: en cualquier cuenta se puede anotar en Bs, $, ₮ o €;
+// si la moneda difiere de la de la cuenta, se convierte automáticamente
+// con la tasa elegida (BCV / Paralelo / USDT / tasa propia).
 // ─────────────────────────────────────────────────────────────────
 'use client'
 
@@ -25,9 +28,21 @@ import { Badge } from '@/components/ui/badge'
 import { useAppStore } from './store'
 import { api } from './api'
 import { useToast } from '@/hooks/use-toast'
-import { CURRENCY_META, formatMoney, parseAmount, type Currency } from '@/lib/finance'
+import {
+  CURRENCIES,
+  CURRENCY_META,
+  RATE_CHOICES,
+  RATE_CHOICE_META,
+  convertEntry,
+  entryRate,
+  formatMoney,
+  formatRate,
+  parseAmount,
+  type Currency,
+  type RateChoice,
+} from '@/lib/finance'
 import { cn } from '@/lib/utils'
-import { Camera, Check, Trash2 } from 'lucide-react'
+import { ArrowRight, Camera, Check, Trash2 } from 'lucide-react'
 import type { TxDTO } from './types'
 
 const inputDate = (iso?: string) => {
@@ -44,6 +59,9 @@ export function TransactionDialog() {
 
   const [type, setType] = useState<'EXPENSE' | 'INCOME' | 'TRANSFER'>('EXPENSE')
   const [amount, setAmount] = useState('')
+  const [entryCurrency, setEntryCurrency] = useState<Currency>('VES')
+  const [rateChoice, setRateChoice] = useState<RateChoice>('BCV')
+  const [customRate, setCustomRate] = useState('')
   const [accountId, setAccountId] = useState('')
   const [toAccountId, setToAccountId] = useState('')
   const [categoryId, setCategoryId] = useState('')
@@ -56,13 +74,28 @@ export function TransactionDialog() {
 
   const overview = useAppStore((s) => s.overview)
   const accounts = useMemo(() => overview?.accounts ?? [], [overview])
+  const rates = overview?.rates ?? null
 
   // al abrir: precargar edición o prefill
   useEffect(() => {
     if (!txDialog.open) return
     if (editing) {
       setType(editing.type)
-      setAmount(String(editing.amount))
+      setAmount(String(editing.originalAmount ?? editing.amount))
+      setEntryCurrency((editing.originalCurrency ?? editing.currency) as Currency)
+      // si hubo conversión, reproducir la tasa exacta como "tasa propia"
+      if (editing.originalCurrency && editing.rateVesUsd) {
+        setRateChoice('MANUAL')
+        const pairCur: Currency =
+          editing.originalCurrency !== 'VES'
+            ? (editing.originalCurrency as Currency)
+            : (editing.currency as Currency)
+        const eurAdj = pairCur === 'EUR' ? (rates?.eurUsd ?? 1.16) : 1
+        setCustomRate(String(Math.round(editing.rateVesUsd * eurAdj * 100) / 100))
+      } else {
+        setRateChoice(RATE_CHOICES.includes(editing.rateSource as RateChoice) ? (editing.rateSource as RateChoice) : 'BCV')
+        setCustomRate('')
+      }
       setAccountId(editing.accountId)
       setToAccountId(editing.toAccountId ?? '')
       setCategoryId(editing.categoryId ?? '')
@@ -73,14 +106,17 @@ export function TransactionDialog() {
     } else {
       setType((prefill?.type as typeof type) ?? 'EXPENSE')
       setAmount(prefill?.amount != null ? String(prefill.amount) : '')
-      setAccountId(
+      const accId =
         prefill?.accountId ??
-          (accounts.length
-            ? (prefill?.currency
-                ? accounts.find((a) => a.currency === prefill.currency)?.id
-                : undefined) ?? accounts[0].id
-            : '')
-      )
+        (accounts.length
+          ? (prefill?.currency
+              ? accounts.find((a) => a.currency === prefill.currency)?.id
+              : undefined) ?? accounts[0].id
+          : '')
+      setAccountId(accId)
+      setEntryCurrency((prefill?.currency as Currency) ?? (accounts.find((a) => a.id === accId)?.currency as Currency) ?? 'VES')
+      setRateChoice('BCV')
+      setCustomRate('')
       setToAccountId(prefill?.toAccountId ?? '')
       setCategoryId(prefill?.categoryId ?? '')
       setDescription(prefill?.description ?? '')
@@ -100,10 +136,34 @@ export function TransactionDialog() {
     type === 'INCOME' ? c.kind === 'INCOME' : c.kind === 'EXPENSE'
   )
 
+  // ── Conversión en vivo ─────────────────────────────────────
   const amountNum = parseAmount(amount)
+  const needsConversion = entryCurrency !== currency
+  const customRateNum = rateChoice === 'MANUAL' ? parseAmount(customRate) : NaN
+  const liveRate = rates
+    ? entryRate(
+        rates,
+        rateChoice,
+        entryCurrency,
+        currency,
+        rateChoice === 'MANUAL' && Number.isFinite(customRateNum) && customRateNum > 0
+          ? customRateNum
+          : null
+      )
+    : 0
+  const rateOk = !needsConversion || liveRate > 0
+  const convertedAmount =
+    needsConversion && rateOk && Number.isFinite(amountNum) && amountNum > 0
+      ? Math.round(convertEntry(amountNum, entryCurrency, currency, liveRate, rates?.eurUsd ?? 1.16) * 100) / 100
+      : null
+  const finalAmount = convertedAmount ?? (Number.isFinite(amountNum) ? amountNum : NaN)
+
   const valid =
     Number.isFinite(amountNum) &&
     amountNum > 0 &&
+    Number.isFinite(finalAmount) &&
+    finalAmount > 0 &&
+    rateOk &&
     accountId &&
     (type !== 'TRANSFER' || (toAccountId && toAccount && toAccount.currency === currency))
 
@@ -116,7 +176,10 @@ export function TransactionDialog() {
     try {
       const payload: Record<string, unknown> = {
         type,
-        amount: amountNum,
+        amount: amountNum, // en la moneda en la que se ingresó
+        currency: entryCurrency,
+        rateSource: rateChoice,
+        customRate: rateChoice === 'MANUAL' && Number.isFinite(customRateNum) && customRateNum > 0 ? customRateNum : null,
         accountId,
         description: description.trim() || null,
         date: `${date}T12:00:00`,
@@ -133,7 +196,13 @@ export function TransactionDialog() {
         await api.createTransaction(payload)
         toast({
           title: `${type === 'EXPENSE' ? 'Gasto' : type === 'INCOME' ? 'Ingreso' : 'Transferencia'} registrado ✓`,
-          description: `${formatMoney(amountNum, currency)}${description.trim() ? ` · ${description.trim()}` : ''}`,
+          description: `${formatMoney(finalAmount, currency)}${
+            convertedAmount != null
+              ? ` (anotaste ${formatMoney(amountNum, entryCurrency)})`
+              : description.trim()
+                ? ` · ${description.trim()}`
+                : ''
+          }`,
         })
       }
       closeTxDialog()
@@ -166,6 +235,10 @@ export function TransactionDialog() {
     { id: 'TRANSFER', label: 'Transferencia', color: '#c084fc' },
   ]
 
+  // divisa del par (para la tasa): la que no es Bs
+  const pairForeign: Currency =
+    entryCurrency !== 'VES' ? entryCurrency : currency !== 'VES' ? currency : 'USD'
+
   return (
     <Dialog open={txDialog.open} onOpenChange={(o) => !o && closeTxDialog()}>
       <DialogContent className="glass border-white/10 max-h-[92dvh] overflow-y-auto sm:max-w-lg">
@@ -177,7 +250,7 @@ export function TransactionDialog() {
           <DialogDescription>
             {type === 'TRANSFER'
               ? 'Mueve dinero entre cuentas de la misma moneda.'
-              : 'La moneda se toma de la cuenta seleccionada.'}
+              : `Anota en cualquier moneda: se convierte automáticamente al saldo de la cuenta (${CURRENCY_META[currency].short}).`}
           </DialogDescription>
         </DialogHeader>
 
@@ -201,11 +274,14 @@ export function TransactionDialog() {
           ))}
         </div>
 
-        {/* monto */}
-        <div className="flex items-center gap-3">
-          <div className="relative flex-1">
-            <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-lg font-bold" style={{ color: CURRENCY_META[currency].color }}>
-              {CURRENCY_META[currency].short}
+        {/* monto + moneda de entrada */}
+        <div className="space-y-2">
+          <div className="relative">
+            <span
+              className="absolute left-3.5 top-1/2 -translate-y-1/2 text-lg font-bold"
+              style={{ color: CURRENCY_META[entryCurrency].color }}
+            >
+              {CURRENCY_META[entryCurrency].short}
             </span>
             <Input
               inputMode="decimal"
@@ -215,7 +291,90 @@ export function TransactionDialog() {
               className="pl-12 h-14 text-2xl font-bold tnum border-white/10 bg-secondary/40"
             />
           </div>
+          <div className="grid grid-cols-4 gap-1.5">
+            {CURRENCIES.map((c) => (
+              <button
+                key={c}
+                type="button"
+                onClick={() => setEntryCurrency(c)}
+                aria-pressed={entryCurrency === c}
+                className={cn(
+                  'rounded-lg border py-1.5 text-xs font-semibold transition-all',
+                  entryCurrency === c
+                    ? 'border-transparent bg-secondary shadow'
+                    : 'border-white/10 text-muted-foreground hover:text-foreground'
+                )}
+                style={entryCurrency === c ? { color: CURRENCY_META[c].color } : undefined}
+              >
+                {CURRENCY_META[c].short}
+                {c === currency && (
+                  <span className="ml-1 text-[9px] font-normal text-muted-foreground">cuenta</span>
+                )}
+              </button>
+            ))}
+          </div>
         </div>
+
+        {/* tasa + preview de conversión */}
+        {needsConversion && (
+          <div className="space-y-2 rounded-xl border border-white/10 bg-secondary/30 p-3">
+            <p className="text-xs text-muted-foreground">
+              Convertir a {CURRENCY_META[currency].label} con la tasa:
+            </p>
+            <div className="grid grid-cols-4 gap-1.5">
+              {RATE_CHOICES.map((rc) => (
+                <button
+                  key={rc}
+                  type="button"
+                  onClick={() => setRateChoice(rc)}
+                  aria-pressed={rateChoice === rc}
+                  title={RATE_CHOICE_META[rc].hint}
+                  className={cn(
+                    'rounded-lg border py-1.5 text-xs font-semibold transition-all',
+                    rateChoice === rc
+                      ? 'border-amber-400/50 bg-amber-400/10 text-amber-300'
+                      : 'border-white/10 text-muted-foreground hover:text-foreground'
+                  )}
+                >
+                  {RATE_CHOICE_META[rc].label}
+                </button>
+              ))}
+            </div>
+            {rateChoice === 'MANUAL' && (
+              <div>
+                <label className="text-xs text-muted-foreground mb-1 block">
+                  Tasa en Bs por 1 {CURRENCY_META[pairForeign].short}
+                </label>
+                <Input
+                  inputMode="decimal"
+                  placeholder="Ej: 889,26"
+                  value={customRate}
+                  onChange={(e) => setCustomRate(e.target.value)}
+                  className="tnum border-white/10 bg-secondary/40"
+                />
+              </div>
+            )}
+            {rateOk ? (
+              <p className="tnum flex items-center gap-1.5 text-xs text-muted-foreground">
+                <span>{formatMoney(amountNum, entryCurrency)}</span>
+                <ArrowRight size={12} className="text-amber-400" />
+                <span className="font-semibold text-foreground">
+                  {formatMoney(convertedAmount ?? 0, currency)}
+                </span>
+                <span className="ml-auto">
+                  {rateChoice === 'MANUAL' ? 'tasa propia' : RATE_CHOICE_META[rateChoice].label}{' '}
+                  {formatRate(liveRate)}
+                </span>
+              </p>
+            ) : (
+              <p className="text-xs text-rose-300">
+                {rateChoice === 'MANUAL'
+                  ? 'Escribe la tasa para convertir'
+                  : 'No hay tasa disponible ahora, usa “Tasa propia”'}
+              </p>
+            )}
+          </div>
+        )}
 
         {/* cuentas */}
         <div className="grid grid-cols-2 gap-3">
@@ -223,7 +382,15 @@ export function TransactionDialog() {
             <label className="text-xs text-muted-foreground mb-1.5 block">
               {type === 'TRANSFER' ? 'Desde' : 'Cuenta'}
             </label>
-            <Select value={accountId} onValueChange={setAccountId}>
+            <Select
+              value={accountId}
+              onValueChange={(v) => {
+                setAccountId(v)
+                // al cambiar de cuenta, volver a su moneda de saldo
+                const acc = accounts.find((a) => a.id === v)
+                if (acc) setEntryCurrency(acc.currency as Currency)
+              }}
+            >
               <SelectTrigger className="bg-secondary/40 border-white/10">
                 <SelectValue placeholder="Cuenta" />
               </SelectTrigger>

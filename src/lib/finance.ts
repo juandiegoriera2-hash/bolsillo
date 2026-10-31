@@ -84,6 +84,70 @@ export function convertCurrency(
   return usd * vesRate(rates, source)
 }
 
+// ── Entrada mixta de moneda (Bs o divisas en cualquier cuenta) ────
+
+export type RateChoice = 'BCV' | 'PARALELO' | 'USDT_P2P' | 'MANUAL'
+export const RATE_CHOICES: RateChoice[] = ['BCV', 'PARALELO', 'USDT_P2P', 'MANUAL']
+
+export const RATE_CHOICE_META: Record<RateChoice, { label: string; hint: string }> = {
+  BCV: { label: 'BCV', hint: 'tasa oficial del día' },
+  PARALELO: { label: 'Paralelo', hint: 'tasa del mercado' },
+  USDT_P2P: { label: 'USDT', hint: 'Binance P2P' },
+  MANUAL: { label: 'Tasa propia', hint: 'escribe la tasa que te dieron' },
+}
+
+/**
+ * Tasa para el par (moneda de entrada ↔ moneda de la cuenta), en
+ * "Bs por 1 unidad de la divisa del par" (la que no es Bs). Si ambas son
+ * divisas (raro), se devuelve Bs por USD como pivote.
+ */
+export function entryRate(
+  rates: RateSnapshot,
+  choice: RateChoice,
+  entry: Currency,
+  account: Currency,
+  customRate?: number | null
+): number {
+  const market = vesRate(rates, choice === 'MANUAL' ? 'PARALELO' : choice)
+  if (choice === 'MANUAL' && customRate && customRate > 0) return customRate
+  const foreign: Currency = entry === 'VES' ? account : entry
+  if (entry !== 'VES' && account !== 'VES') return market // divisa ↔ divisa: pivote Bs/USD
+  if (foreign === 'EUR') {
+    const eurUsd = rates.eurUsd || 1.16
+    if (choice === 'BCV' && rates.eurBcv) return rates.eurBcv
+    if (choice === 'PARALELO' && rates.eurParalelo) return rates.eurParalelo
+    if (choice === 'USDT_P2P' && rates.usdt) return rates.usdt * eurUsd
+    return market * eurUsd
+  }
+  if (foreign === 'USDT' && choice === 'USDT_P2P' && rates.usdt) return rates.usdt
+  return market
+}
+
+/**
+ * Convierte el monto tal como lo ingresó el usuario (moneda `from`) a la
+ * moneda de la cuenta (`to`), con `rate` en "Bs por unidad de la divisa
+ * del par". Para pares divisa↔divisa se usa el pivote USD (rate = Bs/USD).
+ */
+export function convertEntry(
+  amount: number,
+  from: Currency,
+  to: Currency,
+  rate: number,
+  eurUsd = 1.16
+): number {
+  if (from === to) return amount
+  if (to === 'VES') return amount * rate // divisa → Bs
+  if (from === 'VES') return amount / rate // Bs → divisa
+  // divisa ↔ divisa: pivote USD
+  const usd = from === 'EUR' ? amount * eurUsd : amount
+  return to === 'EUR' ? usd / eurUsd : usd
+}
+
+/** Tasa Bs/USD equivalente de una tasa de par (para guardar en rateVesUsd) */
+export function pairRateToUsd(rate: number, pairCurrency: Currency, eurUsd = 1.16): number {
+  return pairCurrency === 'EUR' ? rate / (eurUsd || 1.16) : rate
+}
+
 const nf2 = new Intl.NumberFormat('es-VE', { maximumFractionDigits: 2, minimumFractionDigits: 0 })
 const nf0 = new Intl.NumberFormat('es-VE', { maximumFractionDigits: 0 })
 

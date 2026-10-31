@@ -46,6 +46,9 @@ export type TxDTO = {
   type: 'EXPENSE' | 'INCOME' | 'TRANSFER'
   amount: number
   currency: string
+  originalAmount: number | null
+  originalCurrency: string | null
+  rateSource: string | null
   accountId: string
   accountName: string
   accountColor: string

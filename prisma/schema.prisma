@@ -60,8 +60,11 @@ model Tag {
 model Transaction {
   id          String   @id @default(cuid())
   type        String   @default("EXPENSE") // EXPENSE | INCOME | TRANSFER
-  amount      Float
-  currency    String   @default("VES") // moneda de la cuenta
+  amount      Float // monto en la moneda de la cuenta (ya convertido)
+  currency    String   @default("VES") // moneda de la cuenta (saldo)
+  originalAmount   Float? // monto tal como lo ingresó el usuario (si hubo conversión)
+  originalCurrency String? // moneda en la que se ingresó (Bs, USD, USDT, EUR)
+  rateSource       String? // tasa usada: BCV | PARALELO | USDT_P2P | MANUAL
   accountId   String
   account     Account  @relation(fields: [accountId], references: [id], onDelete: Cascade)
   toAccountId String?  // destino cuando type = TRANSFER

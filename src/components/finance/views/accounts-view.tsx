@@ -44,6 +44,7 @@ export function AccountsView() {
   const accounts = overview?.accounts ?? []
 
   const totalUsd = accounts.reduce((s, a) => s + a.balanceUsd, 0)
+  const totalVes = overview?.netWorth.totalVes ?? 0
 
   const deleteAccount = async (a: AccountDTO) => {
     if (!confirm(`¿Eliminar "${a.name}"?`)) return
@@ -60,7 +61,7 @@ export function AccountsView() {
     <div className="pb-4">
       <ViewHeader
         title="Cuentas y billeteras"
-        subtitle={`${accounts.length} cuenta(s) · Total ≈ ${formatMoney(totalUsd, 'USD')}`}
+        subtitle={`${accounts.length} cuenta(s) · Patrimonio ≈ ${formatMoney(totalVes, 'VES')} (≈ ${formatMoney(totalUsd, 'USD')})`}
       />
 
       <div className="grid sm:grid-cols-2 gap-3">
@@ -214,7 +215,7 @@ function AccountDialog({ open, edit, onClose }: { open: boolean; edit: AccountDT
               </Select>
             </div>
             <div>
-              <Label>Moneda {edit ? '' : '(no editable luego)'}</Label>
+              <Label>Moneda del saldo {edit ? '' : '(no editable luego)'}</Label>
               <Select value={currency} onValueChange={(v) => setCurrency(v as Currency)} disabled={!!edit}>
                 <SelectTrigger className="bg-secondary/40 border-white/10">
                   <SelectValue />
@@ -230,6 +231,9 @@ function AccountDialog({ open, edit, onClose }: { open: boolean; edit: AccountDT
                   ))}
                 </SelectContent>
               </Select>
+              <p className="text-[11px] text-muted-foreground mt-1.5">
+                Es solo la moneda del saldo: puedes registrar movimientos en cualquier moneda y se convierten automáticamente con la tasa del día.
+              </p>
             </div>
           </div>
           <div>

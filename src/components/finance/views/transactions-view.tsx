@@ -303,17 +303,33 @@ export function TransactionsView() {
                         </div>
                       )}
                     </div>
-                    <p
-                      className={cn(
-                        'tnum text-sm font-semibold shrink-0',
-                        t.type === 'INCOME' && 'text-emerald-400',
-                        t.type === 'EXPENSE' && 'text-foreground/90',
-                        t.type === 'TRANSFER' && 'text-violet-300'
+                    <div className="flex flex-col items-end shrink-0">
+                      <p
+                        className={cn(
+                          'tnum text-sm font-semibold',
+                          t.type === 'INCOME' && 'text-emerald-400',
+                          t.type === 'EXPENSE' && 'text-foreground/90',
+                          t.type === 'TRANSFER' && 'text-violet-300'
+                        )}
+                      >
+                        {t.type === 'INCOME' ? '+' : t.type === 'EXPENSE' ? '−' : ''}
+                        {formatMoney(t.amount, t.currency as never)}
+                      </p>
+                      {t.originalAmount != null && t.originalCurrency && (
+                        <p className="tnum text-[10px] text-muted-foreground">
+                          anotado {formatMoney(t.originalAmount, t.originalCurrency as never)}
+                          {t.rateSource === 'MANUAL'
+                            ? ' · tasa propia'
+                            : t.rateSource === 'BCV'
+                              ? ' · BCV'
+                              : t.rateSource === 'PARALELO'
+                                ? ' · paralelo'
+                                : t.rateSource === 'USDT_P2P'
+                                  ? ' · USDT'
+                                  : ''}
+                        </p>
                       )}
-                    >
-                      {t.type === 'INCOME' ? '+' : t.type === 'EXPENSE' ? '−' : ''}
-                      {formatMoney(t.amount, t.currency as never)}
-                    </p>
+                    </div>
                   </button>
                 ))}
               </div>

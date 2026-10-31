@@ -329,12 +329,19 @@ async function executeActions(raw: unknown, userMessage = ''): Promise<ChatActio
         let rateVesUsd = rates.paralelo ?? rates.bcv ?? rates.usdt ?? 1
         let conversionNote = ''
         let description = t.description ?? null
+        const entryAmount = amount
         const conv = autoConvert(amount, srcCurrency, currency, userMessage, rates)
+        let originalAmount: number | null = null
+        let originalCurrency: string | null = null
+        let rateSource: string | null = null
         if (conv) {
           conversionNote = conv.note
           description = description ? `${description} (${conv.eqNote})` : conv.eqNote
           amount = conv.converted
           rateVesUsd = conv.rate
+          originalAmount = entryAmount
+          originalCurrency = srcCurrency
+          rateSource = detectRateSource(userMessage)
         }
         const categories = await db.category.findMany({ where: { kind: t.type } })
         let category = t.category
@@ -360,6 +367,9 @@ async function executeActions(raw: unknown, userMessage = ''): Promise<ChatActio
             type: t.type,
             amount,
             currency,
+            originalAmount,
+            originalCurrency,
+            rateSource,
             accountId: account.id,
             categoryId: category?.id ?? null,
             description,
@@ -409,17 +419,27 @@ async function executeActions(raw: unknown, userMessage = ''): Promise<ChatActio
         const srcCurrency = (tr.currency ?? detectCurrency(userMessage) ?? fromCurrency) as Currency
         let rateVesUsd = rates.paralelo ?? rates.bcv ?? rates.usdt ?? 1
         let conversionNote = ''
+        const entryAmount = amount
         const conv = autoConvert(amount, srcCurrency, fromCurrency, userMessage, rates)
+        let originalAmount: number | null = null
+        let originalCurrency: string | null = null
+        let rateSource: string | null = null
         if (conv) {
           conversionNote = conv.note
           amount = conv.converted
           rateVesUsd = conv.rate
+          originalAmount = entryAmount
+          originalCurrency = srcCurrency
+          rateSource = detectRateSource(userMessage)
         }
         const created = await db.transaction.create({
           data: {
             type: 'TRANSFER',
             amount,
             currency: fromCurrency,
+            originalAmount,
+            originalCurrency,
+            rateSource,
             accountId: from.id,
             toAccountId: to.id,
             description: tr.description ?? `Transferencia ${from.name} → ${to.name}`,

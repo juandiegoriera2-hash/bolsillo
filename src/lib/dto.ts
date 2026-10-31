@@ -17,6 +17,9 @@ export type TxDTO = {
   type: string
   amount: number
   currency: string
+  originalAmount: number | null
+  originalCurrency: string | null
+  rateSource: string | null
   accountId: string
   accountName: string
   accountColor: string
@@ -41,6 +44,9 @@ export function serializeTx(t: TxInclude): TxDTO {
     type: t.type,
     amount: t.amount,
     currency: t.currency,
+    originalAmount: t.originalAmount ?? null,
+    originalCurrency: t.originalCurrency ?? null,
+    rateSource: t.rateSource ?? null,
     accountId: t.accountId,
     accountName: t.account?.name ?? '',
     accountColor: t.account?.color ?? '#94a3b8',

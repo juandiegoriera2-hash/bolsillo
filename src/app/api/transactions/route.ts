@@ -3,6 +3,7 @@ import { db } from '@/lib/db'
 import { ensureSeed } from '@/lib/seed'
 import { getRateSnapshot } from '@/lib/rates'
 import { txToUsd } from '@/lib/queries'
+import { resolveEntry } from '@/lib/entry'
 import { serializeTx, TX_INCLUDE } from '@/lib/dto'
 
 export async function GET(req: Request) {
@@ -72,9 +73,9 @@ export async function POST(req: Request) {
   try {
     const body = await req.json()
     const type = ['EXPENSE', 'INCOME', 'TRANSFER'].includes(body?.type) ? body.type : 'EXPENSE'
-    const amount = Number(body?.amount)
+    const entryAmount = Number(body?.amount)
     const accountId = String(body?.accountId ?? '')
-    if (!Number.isFinite(amount) || amount <= 0)
+    if (!Number.isFinite(entryAmount) || entryAmount <= 0)
       return NextResponse.json({ error: 'Monto inválido' }, { status: 400 })
 
     const account = await db.account.findUnique({ where: { id: accountId } })
@@ -91,19 +92,35 @@ export async function POST(req: Request) {
         )
     }
 
+    // ── Entrada mixta: convertir a la moneda de la cuenta ──────
+    // El cliente envía el monto en la moneda que escribió el usuario
+    // (body.currency) + la tasa a usar (body.rateSource / body.customRate).
     const rates = await getRateSnapshot()
+    const conv = resolveEntry({
+      amount: entryAmount,
+      entryCurrency: body?.currency,
+      accountCurrency: account.currency,
+      rateSource: body?.rateSource,
+      customRate: body?.customRate,
+      rates,
+    })
+    if ('error' in conv) return NextResponse.json({ error: conv.error }, { status: 400 })
+
     const tx = await db.transaction.create({
       data: {
         type,
-        amount,
+        amount: conv.amount,
         currency: account.currency,
+        originalAmount: conv.originalAmount,
+        originalCurrency: conv.originalCurrency,
+        rateSource: conv.rateSource,
         accountId,
         toAccountId: type === 'TRANSFER' ? toAccount!.id : null,
         categoryId: body?.categoryId ? String(body.categoryId) : null,
         description: body?.description ? String(body.description).slice(0, 140) : null,
         reference: body?.reference ? String(body.reference).slice(0, 60) : null,
         source: ['MANUAL', 'AI_CHAT', 'VOICE', 'OCR'].includes(body?.source) ? body.source : 'MANUAL',
-        rateVesUsd: rates.paralelo,
+        rateVesUsd: conv.rateVesUsd,
         date: body?.date ? new Date(body.date) : new Date(),
       },
       include: TX_INCLUDE,
