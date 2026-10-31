@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { ensureSeed } from '@/lib/seed'
 import { handleChatMessage } from '@/lib/assistant'
+import { aiErrorMessage } from '@/lib/ai'
 
 export const maxDuration = 60
 
@@ -15,7 +16,7 @@ export async function POST(req: Request) {
   } catch (e) {
     console.error('[ai/chat]', e)
     return NextResponse.json(
-      { error: 'El asistente no está disponible en este momento' },
+      { error: aiErrorMessage(e, 'El asistente no está disponible en este momento') },
       { status: 500 }
     )
   }

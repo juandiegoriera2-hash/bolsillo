@@ -26,7 +26,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
-import { ArrowDownToLine, Banknote, Database, Download, Plus, Tags, Trash2 } from 'lucide-react'
+import { ArrowDownToLine, Banknote, Database, Download, Plus, Smartphone, Tags, Trash2 } from 'lucide-react'
 
 export function SettingsView() {
   const { overview, refreshOverview, refreshMeta, categories, tags, canInstall, installEvent } = useAppStore()
@@ -210,7 +210,7 @@ export function SettingsView() {
           <Database size={15} className="text-amber-400" /> Datos
         </h3>
         <p className="text-[11px] text-muted-foreground mb-4">
-          Todo se guarda localmente en tu dispositivo (SQLite). Nadie más ve tus finanzas.
+          Los datos se guardan en la base de datos de la app — aquí en este entorno y, si la publicas, en tu propia base Turso. Nadie más ve tus finanzas.
         </p>
         <div className="grid grid-cols-2 gap-2">
           <AlertDialog>
@@ -258,6 +258,39 @@ export function SettingsView() {
             </AlertDialogContent>
           </AlertDialog>
         </div>
+      </section>
+
+      {/* instalar en el teléfono */}
+      <section className="glass rounded-2xl p-5 mb-4">
+        <h3 className="font-semibold text-sm mb-1 flex items-center gap-2">
+          <Smartphone size={15} className="text-emerald-400" /> Instalar en tu teléfono
+        </h3>
+        <p className="text-[11px] text-muted-foreground mb-4 leading-relaxed">
+          Esta vista previa es temporal. Para usar Bolsillo a diario, publícala gratis con la guía incluida en el ZIP (DEPLOY.md, ~20 min, sin tarjeta).
+        </p>
+        <div className="grid grid-cols-3 gap-2 mb-4 text-center">
+          {([
+            ['GitHub', 'Código'],
+            ['Turso', 'Datos'],
+            ['Vercel', 'App'],
+          ] as const).map(([name, desc]) => (
+            <div key={name} className="rounded-xl bg-secondary/60 py-2">
+              <p className="text-[11px] font-semibold">{name}</p>
+              <p className="text-[10px] text-muted-foreground">{desc}</p>
+            </div>
+          ))}
+        </div>
+        <Button
+          asChild
+          className="w-full h-10 bg-gradient-to-r from-emerald-400 to-teal-500 text-emerald-950 hover:from-emerald-300 hover:to-teal-400 font-semibold"
+        >
+          <a href="/bolsillo-source.zip" download="bolsillo-source.zip">
+            <Download size={16} className="mr-2" /> Descargar código (bolsillo-source.zip)
+          </a>
+        </Button>
+        <p className="text-[10px] text-muted-foreground text-center mt-2">
+          Luego: Safari → Compartir → “Agregar a pantalla de inicio”
+        </p>
       </section>
 
       {/* acerca de */}

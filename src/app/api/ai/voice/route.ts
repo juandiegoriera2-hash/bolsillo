@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server'
 import { ensureSeed } from '@/lib/seed'
-import { transcribeAudio } from '@/lib/ai'
+import { transcribeAudio, aiErrorMessage } from '@/lib/ai'
 import { handleChatMessage } from '@/lib/assistant'
 
 export const maxDuration = 90
@@ -16,6 +16,10 @@ export async function POST(req: Request) {
     try {
       transcript = await transcribeAudio(audioBase64)
     } catch (asrErr) {
+      // si la capa IA no está disponible (despliegue sin IA) hay que decirlo claro
+      if (asrErr instanceof Error && asrErr.message.startsWith('La IA no')) {
+        return NextResponse.json({ error: asrErr.message }, { status: 503 })
+      }
       // la API de transcripción rechazó el audio (muy corto, silencio, formato)
       console.error('[ai/voice ASR]', asrErr)
       return NextResponse.json(
@@ -36,6 +40,6 @@ export async function POST(req: Request) {
     return NextResponse.json({ transcript, reply, results })
   } catch (e) {
     console.error('[ai/voice]', e)
-    return NextResponse.json({ error: 'Error procesando el audio' }, { status: 500 })
+    return NextResponse.json({ error: aiErrorMessage(e, 'Error procesando el audio') }, { status: 500 })
   }
 }

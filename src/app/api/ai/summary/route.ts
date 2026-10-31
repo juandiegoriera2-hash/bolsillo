@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import { ensureSeed } from '@/lib/seed'
-import { chatText } from '@/lib/ai'
+import { chatText, aiErrorMessage } from '@/lib/ai'
 import { getRateSnapshot, getRatesHistory } from '@/lib/rates'
 import {
   getAnalytics,
@@ -150,6 +150,9 @@ export async function GET(req: Request) {
     })
   } catch (e) {
     console.error('[ai/summary]', e)
-    return NextResponse.json({ error: 'Error generando el resumen' }, { status: 500 })
+    return NextResponse.json(
+      { error: aiErrorMessage(e, 'Error generando el resumen') },
+      { status: 500 }
+    )
   }
 }

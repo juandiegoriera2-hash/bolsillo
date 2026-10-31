@@ -7,6 +7,8 @@ const nextConfig: NextConfig = {
     ignoreBuildErrors: true,
   },
   reactStrictMode: false,
+  // binarios nativos de Turso/libSQL no deben empaquetarse (Vercel)
+  serverExternalPackages: ["@libsql/client", "libsql"],
 };
 
 export default nextConfig;

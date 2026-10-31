@@ -5,8 +5,33 @@
 // ─────────────────────────────────────────────────────────────────
 import { db } from '@/lib/db'
 import { caracasDateKey } from '@/lib/finance'
+import { DDL_STATEMENTS } from '@/lib/ddl'
 
 let seedPromise: Promise<void> | null = null
+
+// ── Arranque de base de datos (idempotente) ────────────────────────
+// Sobre una base vacía (Turso recién creado o SQLite local sin migrar)
+// crea todas las tablas en el primer uso. No requiere terminal:
+// `prisma db push` queda para desarrollo; producción se auto-arranca.
+let schemaPromise: Promise<void> | null = null
+
+export async function ensureSchema(): Promise<void> {
+  if (!schemaPromise) {
+    schemaPromise = (async () => {
+      const rows = (await db.$queryRawUnsafe(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='AppMeta'"
+      )) as unknown[]
+      if (rows.length > 0) return // ya inicializada
+      for (const stmt of DDL_STATEMENTS) {
+        await db.$executeRawUnsafe(stmt)
+      }
+    })().catch((e) => {
+      schemaPromise = null
+      throw e
+    })
+  }
+  return schemaPromise
+}
 
 export function ensureSeed(): Promise<void> {
   if (!seedPromise) {
@@ -37,6 +62,7 @@ const daysAgo = (n: number, hour = 12): Date => {
 }
 
 async function runSeed(): Promise<void> {
+  await ensureSchema() // tablas presentes (Turso/SQLite sin migrar)
   const existing = await db.appMeta.findUnique({ where: { key: 'seeded' } })
   if (existing) return
 
@@ -534,6 +560,7 @@ async function runSeed(): Promise<void> {
  *   cuentas, movimientos y preferencias por defecto).
  */
 export async function wipeData(reseedDemo: boolean): Promise<void> {
+  await ensureSchema() // por si se borra antes de cualquier otra llamada
   await db.transactionTag.deleteMany()
   await db.transaction.deleteMany()
   await db.currencyExchange.deleteMany()

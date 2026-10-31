@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server'
-import { visionText, extractJson } from '@/lib/ai'
+import { visionText, extractJson, aiErrorMessage } from '@/lib/ai'
 import { parseAmount } from '@/lib/finance'
 
 export const maxDuration = 90
@@ -66,6 +66,9 @@ export async function POST(req: Request) {
     return NextResponse.json({ ...json, monto })
   } catch (e) {
     console.error('[ai/ocr]', e)
-    return NextResponse.json({ error: 'Error analizando el comprobante' }, { status: 500 })
+    return NextResponse.json(
+      { error: aiErrorMessage(e, 'Error analizando el comprobante') },
+      { status: 500 }
+    )
   }
 }
