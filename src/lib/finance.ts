@@ -160,3 +160,50 @@ export function daysBetween(a: Date, b: Date): number {
 export function clamp(v: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, v))
 }
+
+/**
+ * Parser robusto de montos para Venezuela (es-VE + formatos mixtos).
+ * Acepta: "50,000" → 50000 · "50.000" → 50000 · "1.000.000" → 1000000
+ *         "1.000.000,50" → 1000000.5 · "1,234.56" → 1234.56
+ *         "50,5" → 50.5 · "50000" → 50000 · "Bs 50.000" → 50000
+ * Regla: si solo hay un separador y va seguido de exactamente 3 dígitos
+ * (y hay dígitos antes), se interpreta como separador de MILES.
+ */
+export function parseAmount(input: string | number | null | undefined): number {
+  if (typeof input === 'number') return Number.isFinite(input) ? input : NaN
+  if (input == null) return NaN
+  let s = String(input).trim()
+  if (!s) return NaN
+  // mantener solo dígitos, separadores y signo
+  s = s.replace(/[^\d.,-]/g, '')
+  if (!s || s === '-' || s === '.' || s === ',') return NaN
+
+  const hasDot = s.includes('.')
+  const hasComma = s.includes(',')
+
+  if (hasDot && hasComma) {
+    // el ÚLTIMO separador es el decimal; el otro, de miles
+    if (s.lastIndexOf(',') > s.lastIndexOf('.')) {
+      // "50.000,50" → puntos miles, coma decimal
+      s = s.replace(/\./g, '').replace(',', '.')
+    } else {
+      // "50,000.50" → comas miles, punto decimal
+      s = s.replace(/,/g, '')
+    }
+  } else if (hasDot) {
+    const parts = s.split('.')
+    if (parts.length > 2 || (parts.length === 2 && parts[1].length === 3)) {
+      s = parts.join('') // "1.000.000" o "50.000" → miles
+    }
+  } else if (hasComma) {
+    const parts = s.split(',')
+    if (parts.length > 2 || (parts.length === 2 && parts[1].length === 3)) {
+      s = parts.join('') // "1,000,000" o "50,000" → miles
+    } else {
+      s = s.replace(/,/g, '.') // coma decimal: "50,5" → "50.5"
+    }
+  }
+
+  const n = parseFloat(s)
+  return Number.isFinite(n) ? n : NaN
+}

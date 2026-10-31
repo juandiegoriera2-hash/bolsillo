@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { visionText, extractJson } from '@/lib/ai'
+import { parseAmount } from '@/lib/finance'
 
 export const maxDuration = 90
 
@@ -22,7 +23,7 @@ Extrae los datos y responde SOLO con un JSON válido:
 {
   "banco": "banco o plataforma detectada",
   "tipoOperacion": "Pago Móvil" | "Transferencia" | "Recarga" | "Recibo" | "Otro",
-  "monto": 1234.56,
+  "monto": "1.234,56",
   "moneda": "VES" | "USD" | "EUR" | "USDT",
   "fecha": "YYYY-MM-DD",
   "referencia": "número de referencia",
@@ -33,7 +34,8 @@ Extrae los datos y responde SOLO con un JSON válido:
 }
 
 REGLAS CRÍTICAS:
-- Los montos venezolanos usan punto para miles y coma para decimales: "1.234,56" → 1234.56. Devuelve monto como número puro.
+- "monto" es un STRING con el monto EXACTAMENTE como aparece en el comprobante, con sus separadores originales (ej: "50.000,00"). No lo conviertas a número.
+- Los montos venezolanos usan punto para miles y coma para decimales: "1.234,56" = mil doscientos treinta y cuatro con 56. NUNCA trunques: "50.000" son cincuenta mil, NO 50.
 - "Bs" o bolívares → "VES". Comprobantes de Binance/Zinli/Zelle en dólares → "USD". USDT → "USDT".
 - La fecha suele venir dd/mm/yyyy (a veces con hora). Conviértela a YYYY-MM-DD.
 - El monto de la operación NO es el saldo disponible de la cuenta.
@@ -55,10 +57,10 @@ export async function POST(req: Request) {
         { status: 422 }
       )
     }
-    // normalizar monto (por si el modelo devuelve string)
+    // normalizar monto (el modelo devuelve string tal cual el comprobante)
     let monto: number | null = null
     if (json.monto != null) {
-      const n = typeof json.monto === 'number' ? json.monto : parseFloat(String(json.monto).replace(/\./g, '').replace(',', '.'))
+      const n = parseAmount(json.monto as string | number)
       monto = Number.isFinite(n) ? n : null
     }
     return NextResponse.json({ ...json, monto })

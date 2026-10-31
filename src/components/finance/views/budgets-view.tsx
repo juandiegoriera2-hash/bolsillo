@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react'
 import { useAppStore } from '../store'
 import { api } from '../api'
 import { BudgetBar, CatIcon, CurrencyBadge, EmptyState, ViewHeader } from '../parts'
-import { formatMoney } from '@/lib/finance'
+import { formatMoney, parseAmount } from '@/lib/finance'
 import { useToast } from '@/hooks/use-toast'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -200,7 +200,7 @@ function BudgetDialog({
   }
 
   const submit = async () => {
-    const amount = parseFloat(limitAmount.replace(',', '.'))
+    const amount = parseAmount(limitAmount)
     if (!name.trim() || !Number.isFinite(amount) || amount <= 0 || saving) return
     setSaving(true)
     try {

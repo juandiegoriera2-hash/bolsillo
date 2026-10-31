@@ -5,7 +5,7 @@ import { useAppStore } from '../store'
 import { api } from '../api'
 import { CurrencyBadge, DeltaBadge, EmptyState, ViewHeader } from '../parts'
 import { dateKeyShort, fullDateTime, shortDate } from '../fmt'
-import { formatMoney, formatRate } from '@/lib/finance'
+import { formatMoney, formatRate, parseAmount } from '@/lib/finance'
 import { useToast } from '@/hooks/use-toast'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -351,8 +351,8 @@ function ExchangeDialog({ open, onClose, onSaved }: { open: boolean; onClose: ()
   const rates = overview?.rates
 
   const implied = useMemo(() => {
-    const fa = parseFloat(fromAmount.replace(',', '.'))
-    const ta = parseFloat(toAmount.replace(',', '.'))
+    const fa = parseAmount(fromAmount)
+    const ta = parseAmount(toAmount)
     if (!from || !to || !Number.isFinite(fa) || !Number.isFinite(ta) || fa <= 0 || ta <= 0) return null
     if (from.currency === 'VES' && to.currency !== 'VES') return fa / ta
     if (from.currency !== 'VES' && to.currency === 'VES') return ta / fa
@@ -374,13 +374,13 @@ function ExchangeDialog({ open, onClose, onSaved }: { open: boolean; onClose: ()
 
   const diff = useMemo(() => {
     if (implied == null || marketRate == null || !fromAmount) return null
-    const fa = parseFloat(fromAmount.replace(',', '.'))
-    return (implied - marketRate) * (from?.currency === 'VES' ? parseFloat(toAmount.replace(',', '.')) : fa)
+    const fa = parseAmount(fromAmount)
+    return (implied - marketRate) * (from?.currency === 'VES' ? parseAmount(toAmount) : fa)
   }, [implied, marketRate, fromAmount, toAmount, from])
 
   const valid =
     fromAccountId && toAccountId && fromAccountId !== toAccountId && from && to && from.currency !== to.currency &&
-    parseFloat(fromAmount.replace(',', '.')) > 0 && parseFloat(toAmount.replace(',', '.')) > 0
+    parseAmount(fromAmount) > 0 && parseAmount(toAmount) > 0
 
   const submit = async () => {
     if (!valid || saving) return
@@ -389,8 +389,8 @@ function ExchangeDialog({ open, onClose, onSaved }: { open: boolean; onClose: ()
       await api.createExchange({
         fromAccountId,
         toAccountId,
-        fromAmount: parseFloat(fromAmount.replace(',', '.')),
-        toAmount: parseFloat(toAmount.replace(',', '.')),
+        fromAmount: parseAmount(fromAmount),
+        toAmount: parseAmount(toAmount),
         marketSource,
         note: note.trim() || null,
       })
@@ -529,7 +529,7 @@ function ManualRateDialog({ open, onClose }: { open: boolean; onClose: () => voi
   const [saving, setSaving] = useState(false)
 
   const submit = async () => {
-    const v = parseFloat(usd.replace(',', '.'))
+    const v = parseAmount(usd)
     if (!Number.isFinite(v) || v <= 0 || saving) return
     setSaving(true)
     try {

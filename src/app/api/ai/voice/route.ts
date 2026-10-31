@@ -12,10 +12,23 @@ export async function POST(req: Request) {
     const body = await req.json()
     const audioBase64 = String(body?.audioBase64 ?? '')
     if (!audioBase64) return NextResponse.json({ error: 'Audio vacío' }, { status: 400 })
-    const transcript = await transcribeAudio(audioBase64)
+    let transcript: string
+    try {
+      transcript = await transcribeAudio(audioBase64)
+    } catch (asrErr) {
+      // la API de transcripción rechazó el audio (muy corto, silencio, formato)
+      console.error('[ai/voice ASR]', asrErr)
+      return NextResponse.json(
+        {
+          error:
+            'No pude entender el audio 🎙️ Intenta de nuevo: mantén el botón, habla claro y suelta al terminar.',
+        },
+        { status: 422 }
+      )
+    }
     if (!transcript) {
       return NextResponse.json(
-        { error: 'No pude escuchar el audio. Intenta hablar más fuerte o más cerca del micrófono.' },
+        { error: 'No escuché nada. Intenta hablar más fuerte o más cerca del micrófono.' },
         { status: 422 }
       )
     }

@@ -5,7 +5,7 @@ import { useAppStore } from '../store'
 import { api } from '../api'
 import { CurrencyBadge, EmptyState, ViewHeader } from '../parts'
 import { daysUntil, fullDate, shortDate } from '../fmt'
-import { formatMoney, CURRENCIES, CURRENCY_META, type Currency } from '@/lib/finance'
+import { formatMoney, parseAmount, CURRENCIES, CURRENCY_META, type Currency } from '@/lib/finance'
 import { useToast } from '@/hooks/use-toast'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -281,7 +281,7 @@ function DebtDialog({
   }
 
   const submit = async () => {
-    const amt = parseFloat(amount.replace(',', '.'))
+    const amt = parseAmount(amount)
     if (!person.trim() || !Number.isFinite(amt) || amt <= 0 || saving) return
     setSaving(true)
     try {
@@ -400,7 +400,7 @@ function PaymentDialog({ debt, onClose, onSaved }: { debt: DebtDTO | null; onClo
 
   const submit = async () => {
     if (!debt) return
-    const amt = parseFloat(amount.replace(',', '.'))
+    const amt = parseAmount(amount)
     if (!Number.isFinite(amt) || amt <= 0 || saving) return
     setSaving(true)
     try {

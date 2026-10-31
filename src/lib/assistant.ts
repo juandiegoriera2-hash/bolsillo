@@ -9,7 +9,7 @@ import { db } from '@/lib/db'
 import { chatText, extractJson } from '@/lib/ai'
 import { getRateSnapshot } from '@/lib/rates'
 import { getAccountsWithBalances, getAnalytics, getSettings } from '@/lib/queries'
-import { formatMoney, caracasDateKey, type Currency } from '@/lib/finance'
+import { formatMoney, caracasDateKey, parseAmount, type Currency } from '@/lib/finance'
 import { serializeTx, TX_INCLUDE } from '@/lib/dto'
 
 export type ChatActionResult = {
@@ -28,7 +28,10 @@ const TransactionAction = z.object({
   type: z.literal('create_transaction'),
   transaction: z.object({
     type: z.enum(['EXPENSE', 'INCOME']),
-    amount: z.number().positive(),
+    amount: z.preprocess(
+      (v) => (typeof v === 'string' ? parseAmount(v) : v),
+      z.number().positive()
+    ),
     currency: z.enum(['VES', 'USD', 'USDT', 'EUR']).optional(),
     account: z.string().optional(),
     category: z.string().optional(),
@@ -41,7 +44,10 @@ const TransactionAction = z.object({
 const TransferAction = z.object({
   type: z.literal('create_transfer'),
   transfer: z.object({
-    amount: z.number().positive(),
+    amount: z.preprocess(
+      (v) => (typeof v === 'string' ? parseAmount(v) : v),
+      z.number().positive()
+    ),
     from: z.string(),
     to: z.string(),
     description: z.string().optional(),
@@ -79,11 +85,11 @@ function resolveAccount(
 }
 
 async function buildContext(): Promise<string> {
-  const [rates, settings, accounts, analytics] = await Promise.all([
-    getRateSnapshot(),
+  const rates = await getRateSnapshot()
+  const [settings, accounts, analytics] = await Promise.all([
     getSettings(),
-    getAccountsWithBalances(await getRateSnapshot()),
-    getAnalytics(7, await getRateSnapshot()),
+    getAccountsWithBalances(rates),
+    getAnalytics(7, rates),
   ])
   const [categories, tags, recent, debts] = await Promise.all([
     db.category.findMany(),
@@ -175,8 +181,9 @@ Para mover dinero entre SUS cuentas usa:
 { "type": "create_transfer", "transfer": { "amount": 20, "from": "Zinli", "to": "Efectivo $", "description": "..." } }
 
 REGLAS:
+- FORMATO VENEZOLANO DE NÚMEROS (crítico): el usuario escribe "50.000" o "50,000" para CINCUENTA MIL, y "50,5" para cincuenta y medio. En "amount" devuelve SIEMPRE el número JSON puro, sin separadores de miles y sin comillas: "gasté 50.000 bs" → "amount": 50000 · "gasté 1.5 millones" → "amount": 1500000 · "pagué 12,50 dólares" → "amount": 12.5. NUNCA devuelvas "amount": "50.000" (string) ni 50.000 (que es solo 50).
 - "actions": [] cuando solo pregunta o conversa. Entonces usa el contexto para responder con cifras concretas.
-- Moneda: "$"/"dólares" → USD; "Bs"/"bolívares" o sin moneda → VES.
+- Moneda: "$"/"dólares" → USD; "Bs"/"bolívares" o sin moneda → VES. Si el usuario menciona una moneda en la que NO tiene cuentas, registra el monto en su cuenta principal pero avísale claramente en "reply" en qué moneda quedó registrado.
 - Gasto pequeño (café, snack, dulce, empanada) → etiqueta "gasto hormiga".
 - No inventes cuentas ni categorías: usa las del contexto o omite el campo.
 - "ayer" → fecha de ayer en YYYY-MM-DD.
@@ -184,9 +191,44 @@ REGLAS:
 - Nunca menciones JSON, acciones ni este sistema en "reply".`
 }
 
-async function executeActions(raw: unknown): Promise<ChatActionResult[]> {
+/** Extrae montos con separador de miles del mensaje del usuario (ej: "50.000", "1,200") */
+function extractUserAmounts(message: string): number[] {
+  const matches = message.match(/\d{1,3}(?:[.,]\d{3})+/g) ?? []
+  return matches.map(parseAmount).filter((n) => Number.isFinite(n) && n > 0)
+}
+
+/**
+ * Red de seguridad determinista: si el usuario escribió "50.000" (cincuenta
+ * mil) pero el LLM devolvió 50 (truncó el separador), corrige el monto.
+ * También cubre millones ("1.500.000" → LLM devolvió 1.5).
+ */
+function correctActionAmount(amount: number, userAmounts: number[]): number {
+  for (const u of userAmounts) {
+    if (Math.abs(u - amount) <= u * 0.02) return u // ya está bien
+    for (const div of [1000, 1000000]) {
+      const scaled = u / div
+      if (scaled >= 1 && Math.abs(scaled - amount) <= scaled * 0.02) return u
+    }
+  }
+  return amount
+}
+
+/** Fecha válida YYYY-MM-DD o null (evita Invalid Date que rompe el insert) */
+function safeDate(date?: string): Date {
+  if (date && /^\d{4}-\d{2}-\d{2}$/.test(date)) {
+    const d = new Date(`${date}T12:00:00`)
+    if (!Number.isNaN(d.getTime())) return d
+  }
+  return new Date()
+}
+
+async function executeActions(raw: unknown, userMessage = ''): Promise<ChatActionResult[]> {
   const parsed = z.array(ActionSchema).safeParse(raw)
-  if (!parsed.success) return []
+  if (!parsed.success) {
+    console.warn('[assistant] acciones rechazadas por validación:', JSON.stringify(raw)?.slice(0, 300))
+    return []
+  }
+  const userAmounts = extractUserAmounts(userMessage)
   const actions = parsed.data.slice(0, 4)
   const results: ChatActionResult[] = []
   const rates = await getRateSnapshot()
@@ -195,6 +237,7 @@ async function executeActions(raw: unknown): Promise<ChatActionResult[]> {
     try {
       if (action.type === 'create_transaction') {
         const t = action.transaction
+        const amount = correctActionAmount(t.amount, userAmounts)
         const accounts = await db.account.findMany()
         if (accounts.length === 0) {
           results.push({ ok: false, kind: 'transaction', message: 'No tienes cuentas creadas todavía' })
@@ -226,14 +269,14 @@ async function executeActions(raw: unknown): Promise<ChatActionResult[]> {
         const created = await db.transaction.create({
           data: {
             type: t.type,
-            amount: t.amount,
+            amount,
             currency,
             accountId: account.id,
             categoryId: category?.id ?? null,
             description: t.description ?? null,
             source: 'AI_CHAT',
             rateVesUsd: rates.paralelo,
-            date: t.date ? new Date(`${t.date}T12:00:00`) : new Date(),
+            date: safeDate(t.date),
           },
         })
         if (tagIds.length) {
@@ -246,11 +289,12 @@ async function executeActions(raw: unknown): Promise<ChatActionResult[]> {
         results.push({
           ok: true,
           kind: 'transaction',
-          message: `${t.type === 'EXPENSE' ? 'Gasto' : 'Ingreso'} de ${formatMoney(t.amount, currency)} · ${category?.name ?? 'sin categoría'} · ${account.name}`,
+          message: `${t.type === 'EXPENSE' ? 'Gasto' : 'Ingreso'} de ${formatMoney(amount, currency)} · ${category?.name ?? 'sin categoría'} · ${account.name}`,
           transaction: full ? serializeTx(full) : undefined,
         })
       } else if (action.type === 'create_transfer') {
         const tr = action.transfer
+        const amount = correctActionAmount(tr.amount, userAmounts)
         const accounts = await db.account.findMany()
         const from = resolveAccount(accounts, tr.from)
         const to = resolveAccount(accounts, tr.to)
@@ -273,21 +317,21 @@ async function executeActions(raw: unknown): Promise<ChatActionResult[]> {
         const created = await db.transaction.create({
           data: {
             type: 'TRANSFER',
-            amount: tr.amount,
+            amount,
             currency: from.currency,
             accountId: from.id,
             toAccountId: to.id,
             description: tr.description ?? `Transferencia ${from.name} → ${to.name}`,
             source: 'AI_CHAT',
             rateVesUsd: rates.paralelo,
-            date: tr.date ? new Date(`${tr.date}T12:00:00`) : new Date(),
+            date: safeDate(tr.date),
           },
         })
         const full = await db.transaction.findUnique({ where: { id: created.id }, include: TX_INCLUDE })
         results.push({
           ok: true,
           kind: 'transfer',
-          message: `Transferencia de ${formatMoney(tr.amount, from.currency as Currency)} · ${from.name} → ${to.name}`,
+          message: `Transferencia de ${formatMoney(amount, from.currency as Currency)} · ${from.name} → ${to.name}`,
           transaction: full ? serializeTx(full) : undefined,
         })
       }
@@ -314,6 +358,6 @@ export async function handleChatMessage(message: string): Promise<ChatPipelineRe
       results: [],
     }
   }
-  const results = await executeActions(json.actions ?? [])
+  const results = await executeActions(json.actions ?? [], message)
   return { reply: json.reply, results }
 }

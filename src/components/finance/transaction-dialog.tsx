@@ -25,7 +25,7 @@ import { Badge } from '@/components/ui/badge'
 import { useAppStore } from './store'
 import { api } from './api'
 import { useToast } from '@/hooks/use-toast'
-import { CURRENCY_META, formatMoney, type Currency } from '@/lib/finance'
+import { CURRENCY_META, formatMoney, parseAmount, type Currency } from '@/lib/finance'
 import { cn } from '@/lib/utils'
 import { Camera, Check, Trash2 } from 'lucide-react'
 import type { TxDTO } from './types'
@@ -100,7 +100,7 @@ export function TransactionDialog() {
     type === 'INCOME' ? c.kind === 'INCOME' : c.kind === 'EXPENSE'
   )
 
-  const amountNum = parseFloat(amount.replace(',', '.'))
+  const amountNum = parseAmount(amount)
   const valid =
     Number.isFinite(amountNum) &&
     amountNum > 0 &&

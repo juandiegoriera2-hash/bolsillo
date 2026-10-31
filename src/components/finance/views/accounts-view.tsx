@@ -4,7 +4,7 @@ import { useState } from 'react'
 import { useAppStore } from '../store'
 import { api } from '../api'
 import { CatIcon, CurrencyBadge, EmptyState, ICONS, ViewHeader } from '../parts'
-import { formatMoney, CURRENCIES, CURRENCY_META, type Currency } from '@/lib/finance'
+import { formatMoney, parseAmount, CURRENCIES, CURRENCY_META, type Currency } from '@/lib/finance'
 import { useToast } from '@/hooks/use-toast'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -158,7 +158,7 @@ function AccountDialog({ open, edit, onClose }: { open: boolean; edit: AccountDT
           type,
           color,
           icon,
-          initialBalance: parseFloat(initialBalance.replace(',', '.')) || 0,
+          initialBalance: parseAmount(initialBalance) || 0,
         })
         toast({ title: 'Cuenta actualizada ✓' })
       } else {
@@ -166,7 +166,7 @@ function AccountDialog({ open, edit, onClose }: { open: boolean; edit: AccountDT
           name: name.trim(),
           type,
           currency,
-          initialBalance: parseFloat(initialBalance.replace(',', '.')) || 0,
+          initialBalance: parseAmount(initialBalance) || 0,
           color,
           icon,
         })

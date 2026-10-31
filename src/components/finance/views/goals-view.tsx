@@ -5,7 +5,7 @@ import { useAppStore } from '../store'
 import { api } from '../api'
 import { CatIcon, EmptyState, ICONS, ViewHeader } from '../parts'
 import { daysUntil, fullDate, shortDate } from '../fmt'
-import { formatMoney } from '@/lib/finance'
+import { formatMoney, parseAmount } from '@/lib/finance'
 import { useToast } from '@/hooks/use-toast'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -201,7 +201,7 @@ function GoalDialog({
   }
 
   const submit = async () => {
-    const amt = parseFloat(targetAmount.replace(',', '.'))
+    const amt = parseAmount(targetAmount)
     if (!name.trim() || !Number.isFinite(amt) || amt <= 0 || saving) return
     setSaving(true)
     try {
@@ -312,7 +312,7 @@ function ContributeDialog({ goal, onClose, onSaved }: { goal: GoalDTO | null; on
 
   const submit = async () => {
     if (!goal) return
-    const amt = parseFloat(amount.replace(',', '.'))
+    const amt = parseAmount(amount)
     if (!Number.isFinite(amt) || amt <= 0 || saving) return
     setSaving(true)
     try {
