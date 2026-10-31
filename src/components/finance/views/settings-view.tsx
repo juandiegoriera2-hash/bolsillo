@@ -31,7 +31,7 @@ import { ArrowDownToLine, Banknote, Database, Download, Plus, Tags, Trash2 } fro
 export function SettingsView() {
   const { overview, refreshOverview, refreshMeta, categories, tags, canInstall, installEvent } = useAppStore()
   const { toast } = useToast()
-  const [baseCurrency, setBaseCurrency] = useState(overview?.settings.baseCurrency ?? 'USD')
+  const [baseCurrency, setBaseCurrency] = useState(overview?.settings.baseCurrency ?? 'VES')
   const [valuationSource, setValuationSource] = useState(overview?.settings.valuationSource ?? 'PARALELO')
   const [newTag, setNewTag] = useState('')
   const [wiping, setWiping] = useState(false)

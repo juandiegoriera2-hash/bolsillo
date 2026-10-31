@@ -44,7 +44,10 @@ import { useToast } from '@/hooks/use-toast'
 export function DashboardView() {
   const { overview, loadingOverview, refreshOverview, openTxDialog, setView } = useAppStore()
   const { toast } = useToast()
-  const [showBs, setShowBs] = useState(false)
+  // el patrimonio se muestra nativamente en la moneda base del usuario
+  // (Bs por defecto en Venezuela); el toggle solo sobreescribe en la sesión
+  const [showBsOverride, setShowBsOverride] = useState<boolean | null>(null)
+  const showBs = showBsOverride ?? (overview?.settings.baseCurrency === 'VES')
   const [refreshing, setRefreshing] = useState(false)
 
   const rates = overview?.rates
@@ -147,7 +150,7 @@ export function DashboardView() {
             </div>
             <div className="flex items-center gap-2 mt-2.5">
               <button
-                onClick={() => setShowBs(!showBs)}
+                onClick={() => setShowBsOverride(!showBs)}
                 className="rounded-lg bg-secondary/70 px-2.5 py-1 text-xs font-semibold text-foreground/80 hover:bg-secondary transition-colors"
               >
                 Ver en {showBs ? 'dólares' : 'bolívares'}

@@ -51,7 +51,7 @@ async function runSeed(): Promise<void> {
     const rand = rng(20261030)
 
     // ── Config por defecto ─────────────────────────────────────
-    await db.appMeta.create({ data: { key: 'baseCurrency', value: 'USD' } })
+    await db.appMeta.create({ data: { key: 'baseCurrency', value: 'VES' } })
     await db.appMeta.create({ data: { key: 'valuationSource', value: 'PARALELO' } })
 
     // ── Categorías ─────────────────────────────────────────────
@@ -570,7 +570,7 @@ export async function wipeData(reseedDemo: boolean): Promise<void> {
   await db.appMeta.upsert({
     where: { key: 'baseCurrency' },
     update: {},
-    create: { key: 'baseCurrency', value: 'USD' },
+    create: { key: 'baseCurrency', value: 'VES' },
   })
   await db.appMeta.upsert({
     where: { key: 'valuationSource' },

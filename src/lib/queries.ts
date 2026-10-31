@@ -436,7 +436,7 @@ export async function getSettings(): Promise<{ baseCurrency: Currency; valuation
   const rows = await db.appMeta.findMany({ where: { key: { in: ['baseCurrency', 'valuationSource'] } } })
   const get = (k: string, d: string) => rows.find((r) => r.key === k)?.value ?? d
   return {
-    baseCurrency: (get('baseCurrency', 'USD') as Currency) ?? 'USD',
+    baseCurrency: (get('baseCurrency', 'VES') as Currency) ?? 'VES',
     valuationSource: (get('valuationSource', 'PARALELO') as ValuationSource) ?? 'PARALELO',
   }
 }

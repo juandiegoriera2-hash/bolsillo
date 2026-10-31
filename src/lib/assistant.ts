@@ -9,7 +9,16 @@ import { db } from '@/lib/db'
 import { chatText, extractJson } from '@/lib/ai'
 import { getRateSnapshot } from '@/lib/rates'
 import { getAccountsWithBalances, getAnalytics, getSettings } from '@/lib/queries'
-import { formatMoney, caracasDateKey, parseAmount, type Currency } from '@/lib/finance'
+import {
+  caracasDateKey,
+  convertCurrency,
+  formatMoney,
+  parseAmount,
+  vesRate,
+  type Currency,
+  type RateSnapshot,
+  type ValuationSource,
+} from '@/lib/finance'
 import { serializeTx, TX_INCLUDE } from '@/lib/dto'
 
 export type ChatActionResult = {
@@ -48,6 +57,7 @@ const TransferAction = z.object({
       (v) => (typeof v === 'string' ? parseAmount(v) : v),
       z.number().positive()
     ),
+    currency: z.enum(['VES', 'USD', 'USDT', 'EUR']).optional(),
     from: z.string(),
     to: z.string(),
     description: z.string().optional(),
@@ -84,6 +94,69 @@ function resolveAccount(
   return null
 }
 
+/** Etiqueta corta de la fuente de tasa (para las notas de conversión) */
+const RATE_SOURCE_LABEL: Record<ValuationSource, string> = {
+  BCV: 'BCV',
+  PARALELO: 'paralelo',
+  USDT_P2P: 'USDT',
+}
+
+/**
+ * Fuente de tasa para la conversión automática de divisa. El usuario
+ * referencia sus montos en dólares a la tasa BCV del día ("dólares BCV");
+ * si menciona paralelo o binance, se respeta. Por defecto: BCV oficial.
+ */
+function detectRateSource(message: string): ValuationSource {
+  const m = norm(message)
+  if (m.includes('bcv') || m.includes('oficial') || m.includes('banco central')) return 'BCV'
+  if (m.includes('paralel')) return 'PARALELO'
+  if (m.includes('binance') || m.includes('p2p') || m.includes('usdt')) return 'USDT_P2P'
+  return 'BCV'
+}
+
+/**
+ * Moneda mencionada explícitamente por el usuario (red de seguridad
+ * determinista por si el LLM omite el campo "currency").
+ */
+function detectCurrency(message: string): Currency | null {
+  const m = norm(message)
+  if (/\$\d|\d\s?\$|dolares?|\busd\b/.test(m)) return 'USD'
+  if (/usdt|binance|tether/.test(m)) return 'USDT'
+  if (/euros?|\beur\b/.test(m)) return 'EUR'
+  if (/\bbs\b|bolivares?|\bves\b/.test(m)) return 'VES'
+  return null
+}
+
+/** Resultado de una conversión automática de divisa */
+type ConversionResult = { converted: number; note: string; eqNote: string; rate: number }
+
+/**
+ * Convierte `amount` de `from` a `to` con la tasa del día detectada del
+ * mensaje (BCV por defecto). Ej: $12 con cuenta en Bs a BCV 889,26
+ * → Bs 10.671. Devuelve las notas para el chip y la descripción, o null
+ * si `from === to` o la conversión no es válida.
+ */
+function autoConvert(
+  amount: number,
+  from: Currency,
+  to: Currency,
+  message: string,
+  rates: RateSnapshot
+): ConversionResult | null {
+  if (from === to) return null
+  const source = detectRateSource(message)
+  const rate = vesRate(rates, source)
+  const converted = Math.round(convertCurrency(amount, from, to, rates, source) * 100) / 100
+  if (!Number.isFinite(converted) || converted <= 0) return null
+  const label = RATE_SOURCE_LABEL[source]
+  return {
+    converted,
+    note: ` · ${formatMoney(amount, from)} → ${formatMoney(converted, to)} (${label} ${rate.toFixed(2)})`,
+    eqNote: `equiv. ${formatMoney(amount, from)} · ${label} ${rate.toFixed(2)}`,
+    rate,
+  }
+}
+
 async function buildContext(): Promise<string> {
   const rates = await getRateSnapshot()
   const [settings, accounts, analytics] = await Promise.all([
@@ -102,13 +175,15 @@ async function buildContext(): Promise<string> {
   const lines: string[] = []
   lines.push(`Hoy es ${caracasDateKey()} (Venezuela).`)
   lines.push(
-    `IMPORTANTE: todos los totales de gasto/ingreso del contexto están en DÓLARES (USD), aunque el usuario tenga cuentas en bolívares. Si respondes cifras del contexto, exprésalas en $ o conviértelas a Bs con la tasa paralelo.`
+    settings.baseCurrency === 'VES'
+      ? `IMPORTANTE: los totales de gasto/ingreso del contexto están en DÓLARES (USD), pero el patrimonio del usuario se muestra NATURALMENTE en BOLÍVARES (Bs). Si respondes cifras, exprésalas en Bs (conviértelas con la tasa paralelo); el equivalente en $ solo si aporta.`
+      : `IMPORTANTE: todos los totales de gasto/ingreso del contexto están en DÓLARES (USD). Si respondes cifras del contexto, exprésalas en $.`
   )
   lines.push(
     `Tasas: BCV ${rates.bcv?.toFixed(2) ?? '—'} Bs/$ · Paralelo ${rates.paralelo?.toFixed(2) ?? '—'} Bs/$ · USDT P2P ${rates.usdt?.toFixed(2) ?? '—'} Bs/₮`
   )
   lines.push(
-    `Cuentas: ${accounts.map((a) => `${a.name} (${a.currency}, saldo ${a.balance.toFixed(2)})`).join(' · ') || 'sin cuentas'}`
+    `Cuentas: ${accounts.map((a) => `${a.name} (${a.currency}, saldo ${formatMoney(a.balance, a.currency)})`).join(' · ') || 'sin cuentas'}`
   )
   lines.push(
     `Categorías de gasto: ${categories.filter((c) => c.kind === 'EXPENSE').map((c) => c.name).join(', ')}`
@@ -146,7 +221,6 @@ async function buildContext(): Promise<string> {
         )
         .join(' · ')}`
     )
-  void settings
   return lines.join('\n')
 }
 
@@ -178,12 +252,13 @@ Cuando el usuario registre un movimiento ("gasté 450 en almuerzo", "me pagaron 
 }
 
 Para mover dinero entre SUS cuentas usa:
-{ "type": "create_transfer", "transfer": { "amount": 20, "from": "Zinli", "to": "Efectivo $", "description": "..." } }
+{ "type": "create_transfer", "transfer": { "amount": 20, "currency": "USD", "from": "Zinli", "to": "Efectivo $", "description": "..." } }
 
 REGLAS:
 - FORMATO VENEZOLANO DE NÚMEROS (crítico): el usuario escribe "50.000" o "50,000" para CINCUENTA MIL, y "50,5" para cincuenta y medio. En "amount" devuelve SIEMPRE el número JSON puro, sin separadores de miles y sin comillas: "gasté 50.000 bs" → "amount": 50000 · "gasté 1.5 millones" → "amount": 1500000 · "pagué 12,50 dólares" → "amount": 12.5. NUNCA devuelvas "amount": "50.000" (string) ni 50.000 (que es solo 50).
 - "actions": [] cuando solo pregunta o conversa. Entonces usa el contexto para responder con cifras concretas.
-- Moneda: "$"/"dólares" → USD; "Bs"/"bolívares" o sin moneda → VES. Si el usuario menciona una moneda en la que NO tiene cuentas, registra el monto en su cuenta principal pero avísale claramente en "reply" en qué moneda quedó registrado.
+- Moneda: "$"/"dólares" → USD; "Bs"/"bolívares" → VES; "usdt" → USDT; "€"/"euros" → EUR. Devuelve "currency" SIEMPRE que el usuario mencione una moneda; si no menciona ninguna, omite el campo.
+- CONVERSIÓN AUTOMÁTICA: si la moneda del monto no coincide con la de la cuenta destino, el sistema la convierte solo con la tasa del día (BCV por defecto; paralelo o binance si el usuario lo pide) y la registra en la moneda de la cuenta. Anúncialo en "reply" con el monto original y su equivalente aproximado (ej: "anoté los $12, que a BCV de hoy son unos Bs 10.671"). No calcules de memoria con precisión: el sistema convierte exacto.
 - Gasto pequeño (café, snack, dulce, empanada) → etiqueta "gasto hormiga".
 - No inventes cuentas ni categorías: usa las del contexto o omite el campo.
 - "ayer" → fecha de ayer en YYYY-MM-DD.
@@ -237,16 +312,30 @@ async function executeActions(raw: unknown, userMessage = ''): Promise<ChatActio
     try {
       if (action.type === 'create_transaction') {
         const t = action.transaction
-        const amount = correctActionAmount(t.amount, userAmounts)
-        const accounts = await db.account.findMany()
+        let amount = correctActionAmount(t.amount, userAmounts)
+        const accounts = await db.account.findMany({ orderBy: { createdAt: 'asc' } })
         if (accounts.length === 0) {
           results.push({ ok: false, kind: 'transaction', message: 'No tienes cuentas creadas todavía' })
           continue
         }
         const named = t.account ? resolveAccount(accounts, t.account) : null
-        const account =
-          named ?? resolveAccount(accounts, undefined, t.currency) ?? accounts[0]
+        const account = named ?? resolveAccount(accounts, undefined, t.currency) ?? accounts[0]
         const currency = account.currency as Currency
+
+        // ── Conversión automática de divisa ──────────────────────
+        // "gasté 12$ BCV" con cuenta en Bs → 12 × 889,26 = Bs 10.671.
+        // Si el LLM omite "currency", se deduce del mensaje del usuario.
+        const srcCurrency = (t.currency ?? detectCurrency(userMessage) ?? currency) as Currency
+        let rateVesUsd = rates.paralelo ?? rates.bcv ?? rates.usdt ?? 1
+        let conversionNote = ''
+        let description = t.description ?? null
+        const conv = autoConvert(amount, srcCurrency, currency, userMessage, rates)
+        if (conv) {
+          conversionNote = conv.note
+          description = description ? `${description} (${conv.eqNote})` : conv.eqNote
+          amount = conv.converted
+          rateVesUsd = conv.rate
+        }
         const categories = await db.category.findMany({ where: { kind: t.type } })
         let category = t.category
           ? categories.find(
@@ -273,9 +362,9 @@ async function executeActions(raw: unknown, userMessage = ''): Promise<ChatActio
             currency,
             accountId: account.id,
             categoryId: category?.id ?? null,
-            description: t.description ?? null,
+            description,
             source: 'AI_CHAT',
-            rateVesUsd: rates.paralelo,
+            rateVesUsd,
             date: safeDate(t.date),
           },
         })
@@ -289,13 +378,13 @@ async function executeActions(raw: unknown, userMessage = ''): Promise<ChatActio
         results.push({
           ok: true,
           kind: 'transaction',
-          message: `${t.type === 'EXPENSE' ? 'Gasto' : 'Ingreso'} de ${formatMoney(amount, currency)} · ${category?.name ?? 'sin categoría'} · ${account.name}`,
+          message: `${t.type === 'EXPENSE' ? 'Gasto' : 'Ingreso'} de ${formatMoney(amount, currency)}${conversionNote} · ${category?.name ?? 'sin categoría'} · ${account.name}`,
           transaction: full ? serializeTx(full) : undefined,
         })
       } else if (action.type === 'create_transfer') {
         const tr = action.transfer
-        const amount = correctActionAmount(tr.amount, userAmounts)
-        const accounts = await db.account.findMany()
+        let amount = correctActionAmount(tr.amount, userAmounts)
+        const accounts = await db.account.findMany({ orderBy: { createdAt: 'asc' } })
         const from = resolveAccount(accounts, tr.from)
         const to = resolveAccount(accounts, tr.to)
         if (!from || !to || from.id === to.id) {
@@ -314,16 +403,28 @@ async function executeActions(raw: unknown, userMessage = ''): Promise<ChatActio
           })
           continue
         }
+        const fromCurrency = from.currency as Currency
+
+        // ── Conversión automática (monto en otra moneda) ─────────
+        const srcCurrency = (tr.currency ?? detectCurrency(userMessage) ?? fromCurrency) as Currency
+        let rateVesUsd = rates.paralelo ?? rates.bcv ?? rates.usdt ?? 1
+        let conversionNote = ''
+        const conv = autoConvert(amount, srcCurrency, fromCurrency, userMessage, rates)
+        if (conv) {
+          conversionNote = conv.note
+          amount = conv.converted
+          rateVesUsd = conv.rate
+        }
         const created = await db.transaction.create({
           data: {
             type: 'TRANSFER',
             amount,
-            currency: from.currency,
+            currency: fromCurrency,
             accountId: from.id,
             toAccountId: to.id,
             description: tr.description ?? `Transferencia ${from.name} → ${to.name}`,
             source: 'AI_CHAT',
-            rateVesUsd: rates.paralelo,
+            rateVesUsd,
             date: safeDate(tr.date),
           },
         })
@@ -331,7 +432,7 @@ async function executeActions(raw: unknown, userMessage = ''): Promise<ChatActio
         results.push({
           ok: true,
           kind: 'transfer',
-          message: `Transferencia de ${formatMoney(amount, from.currency as Currency)} · ${from.name} → ${to.name}`,
+          message: `Transferencia de ${formatMoney(amount, fromCurrency)}${conversionNote} · ${from.name} → ${to.name}`,
           transaction: full ? serializeTx(full) : undefined,
         })
       }
