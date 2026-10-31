@@ -3,7 +3,7 @@
 // ─────────────────────────────────────────────────────────────────
 'use client'
 
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import { useAppStore } from './store'
 import { TransactionDialog } from './transaction-dialog'
@@ -29,6 +29,7 @@ import {
   Target,
   TrendingUp,
   Wallet,
+  WifiOff,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import {
@@ -87,6 +88,7 @@ export function BolsilloApp() {
     <div className="min-h-dvh flex bg-background text-foreground">
       <Sidebar />
       <div className="flex-1 flex flex-col min-w-0">
+        <OfflineBanner />
         <main className="flex-1 w-full max-w-3xl lg:max-w-5xl mx-auto px-4 sm:px-6 pb-32 md:pb-12 md:pt-2">
           <AnimatePresence mode="wait">
             <motion.div
@@ -103,6 +105,52 @@ export function BolsilloApp() {
         <BottomNav />
       </div>
       <TransactionDialog />
+    </div>
+  )
+}
+
+// ── Indicador de conexión ────────────────────────────────────────
+// Bolsillo es una app web: los datos viven en el servidor. Sin
+// conexión no se pueden leer ni guardar movimientos. Este aviso
+// lo comunica claramente y re-sincroniza al reconectar.
+
+function OfflineBanner() {
+  const { refreshOverview, refreshMeta } = useAppStore()
+  const [offline, setOffline] = useState(false)
+
+  useEffect(() => {
+    const goOffline = () => setOffline(true)
+    const goOnline = () => {
+      setOffline(false)
+      // re-sincronizar datos al recuperar la conexión
+      refreshOverview().catch(() => {})
+      refreshMeta().catch(() => {})
+    }
+    window.addEventListener('offline', goOffline)
+    window.addEventListener('online', goOnline)
+    // sincronizar estado inicial (evita setState síncrono en el efecto)
+    const raf = requestAnimationFrame(() => setOffline(!navigator.onLine))
+    return () => {
+      window.removeEventListener('offline', goOffline)
+      window.removeEventListener('online', goOnline)
+      cancelAnimationFrame(raf)
+    }
+  }, [refreshOverview, refreshMeta])
+
+  if (!offline) return null
+
+  return (
+    <div role="status" aria-live="polite" className="px-4 sm:px-6 pt-2">
+      <div className="flex items-center gap-3 rounded-2xl border border-amber-400/25 bg-amber-400/10 px-4 py-3 text-amber-200">
+        <WifiOff size={18} className="shrink-0" aria-hidden />
+        <div className="min-w-0">
+          <p className="text-sm font-semibold leading-tight">Sin conexión</p>
+          <p className="text-[11px] leading-snug text-amber-200/70 mt-0.5">
+            Bolsillo necesita internet para leer y guardar tus datos. Se
+            sincroniza solo al reconectar.
+          </p>
+        </div>
+      </div>
     </div>
   )
 }

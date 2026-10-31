@@ -18,10 +18,16 @@ import type {
 import type { RateSnapshot } from '@/lib/finance'
 
 async function req<T>(url: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(url, {
-    ...init,
-    headers: { 'Content-Type': 'application/json', ...(init?.headers ?? {}) },
-  })
+  let res: Response
+  try {
+    res = await fetch(url, {
+      ...init,
+      headers: { 'Content-Type': 'application/json', ...(init?.headers ?? {}) },
+    })
+  } catch {
+    // fallo de red (sin conexión / servidor inalcanzable)
+    throw new Error('Sin conexión al servidor. Revisa tu internet e inténtalo de nuevo.')
+  }
   const text = await res.text()
   let json: unknown = null
   try {
