@@ -34,7 +34,18 @@ const SOURCE_COLORS: Record<string, string> = {
   BCV: '#f5b544',
   PARALELO: '#38e07f',
   USDT_P2P: '#2dd4bf',
+  EUR: '#c084fc',
 }
+
+type RateKey = 'bcv' | 'paralelo' | 'usdt' | 'eurBcv'
+
+/** valor actual de una tasa desde el snapshot */
+const snapValue = (rates: { bcv: number | null; paralelo: number | null; usdt: number | null; eurBcv: number | null } | null | undefined, key: RateKey) =>
+  key === 'eurBcv' ? rates?.eurBcv ?? null : rates?.[key] ?? null
+
+/** valor de una tasa en un punto del historial */
+const histValue = (h: RateHistoryPoint, key: RateKey) =>
+  key === 'eurBcv' ? h.eur : h[key]
 
 export function RatesView() {
   const { overview, refreshOverview } = useAppStore()
@@ -43,7 +54,7 @@ export function RatesView() {
   const [exchanges, setExchanges] = useState<{ items: ExchangeDTO[]; gainedUsd: number; lostUsd: number; netUsd: number } | null>(null)
   const [exchangeOpen, setExchangeOpen] = useState(false)
   const [manualOpen, setManualOpen] = useState(false)
-  const [visible, setVisible] = useState<string[]>(['bcv', 'paralelo', 'usdt'])
+  const [visible, setVisible] = useState<string[]>(['bcv', 'paralelo', 'usdt', 'eurBcv'])
   const [refreshing, setRefreshing] = useState(false)
 
   const rates = overview?.rates
@@ -63,20 +74,21 @@ export function RatesView() {
     bcv: h.bcv ? +h.bcv.toFixed(2) : null,
     paralelo: h.paralelo ? +h.paralelo.toFixed(2) : null,
     usdt: h.usdt ? +h.usdt.toFixed(2) : null,
+    eurBcv: h.eur ? +h.eur.toFixed(2) : null,
   }))
 
-  const variation = (key: 'bcv' | 'paralelo' | 'usdt') => {
+  const variation = (key: RateKey) => {
     if (hist.length < 2 || !rates) return null
-    const before = hist[hist.length - 2][key]
-    const now = rates[key]
+    const before = histValue(hist[hist.length - 2], key)
+    const now = snapValue(rates, key)
     if (!now || !before) return null
     return ((now - before) / before) * 100
   }
 
-  const monthVar = (key: 'bcv' | 'paralelo' | 'usdt') => {
+  const monthVar = (key: RateKey) => {
     if (hist.length < 8 || !rates) return null
-    const before = hist[hist.length - 8][key]
-    const now = rates[key]
+    const before = histValue(hist[hist.length - 8], key)
+    const now = snapValue(rates, key)
     if (!now || !before) return null
     return ((now - before) / before) * 100
   }
@@ -101,16 +113,17 @@ export function RatesView() {
     <div className="pb-4">
       <ViewHeader
         title="Tasas y cambios"
-        subtitle="Motor multimoneda: BCV, paralelo y USDT P2P · actualización diaria"
+        subtitle="Motor multimoneda: BCV, paralelo, USDT P2P y euro BCV · actualización diaria"
       />
 
       {/* tarjetas de tasas */}
-      <div className="grid grid-cols-3 gap-3 mb-5">
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-5">
         {(
           [
             { key: 'bcv', label: 'BCV Oficial', color: SOURCE_COLORS.BCV },
             { key: 'paralelo', label: 'Paralelo', color: SOURCE_COLORS.PARALELO },
             { key: 'usdt', label: 'USDT P2P', color: SOURCE_COLORS.USDT_P2P },
+            { key: 'eurBcv', label: 'Euro BCV', color: SOURCE_COLORS.EUR },
           ] as const
         ).map((s) => (
           <div key={s.key} className="glass rounded-2xl p-4">
@@ -119,7 +132,7 @@ export function RatesView() {
                 {s.label}
               </span>
             </div>
-            <p className="tnum text-xl md:text-2xl font-bold">{formatRate(rates?.[s.key] ?? null)}</p>
+            <p className="tnum text-xl md:text-2xl font-bold">{formatRate(snapValue(rates, s.key))}</p>
             <div className="flex items-center gap-1.5 mt-2 flex-wrap">
               {variation(s.key) != null && <DeltaBadge value={variation(s.key)!} />}
               {monthVar(s.key) != null && (
@@ -148,12 +161,13 @@ export function RatesView() {
       <section className="glass rounded-2xl p-5 mb-6">
         <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
           <h3 className="font-semibold text-sm">Historial 30 días</h3>
-          <div className="flex gap-1.5">
+          <div className="flex gap-1.5 flex-wrap">
             {(
               [
                 { id: 'bcv', label: 'BCV', color: SOURCE_COLORS.BCV },
                 { id: 'paralelo', label: 'Paralelo', color: SOURCE_COLORS.PARALELO },
                 { id: 'usdt', label: 'USDT', color: SOURCE_COLORS.USDT_P2P },
+                { id: 'eurBcv', label: '€ BCV', color: SOURCE_COLORS.EUR },
               ] as const
             ).map((s) => (
               <button
@@ -193,7 +207,7 @@ export function RatesView() {
                         {payload.map((p) => (
                           <p key={p.name} className="tnum flex items-center gap-1.5">
                             <span className="w-2 h-2 rounded-full" style={{ backgroundColor: p.color }} />
-                            {p.name === 'bcv' ? 'BCV' : p.name === 'paralelo' ? 'Paralelo' : 'USDT'}: Bs{' '}
+                            {p.name === 'bcv' ? 'BCV' : p.name === 'paralelo' ? 'Paralelo' : p.name === 'usdt' ? 'USDT' : 'Euro BCV'}: Bs{' '}
                             {Number(p.value).toFixed(2)}
                           </p>
                         ))}
@@ -204,13 +218,14 @@ export function RatesView() {
                 <Legend
                   formatter={(v) => (
                     <span className="text-[11px] text-muted-foreground">
-                      {v === 'bcv' ? 'BCV' : v === 'paralelo' ? 'Paralelo' : 'USDT P2P'}
+                      {v === 'bcv' ? 'BCV' : v === 'paralelo' ? 'Paralelo' : v === 'usdt' ? 'USDT P2P' : 'Euro BCV'}
                     </span>
                   )}
                 />
                 {visible.includes('bcv') && <Line type="monotone" dataKey="bcv" stroke={SOURCE_COLORS.BCV} strokeWidth={2} dot={false} />}
                 {visible.includes('paralelo') && <Line type="monotone" dataKey="paralelo" stroke={SOURCE_COLORS.PARALELO} strokeWidth={2} dot={false} />}
                 {visible.includes('usdt') && <Line type="monotone" dataKey="usdt" stroke={SOURCE_COLORS.USDT_P2P} strokeWidth={2} dot={false} strokeDasharray="4 3" />}
+                {visible.includes('eurBcv') && <Line type="monotone" dataKey="eurBcv" stroke={SOURCE_COLORS.EUR} strokeWidth={2} dot={false} strokeDasharray="2 3" />}
               </LineChart>
             </ResponsiveContainer>
           </div>
@@ -526,17 +541,20 @@ function ManualRateDialog({ open, onClose }: { open: boolean; onClose: () => voi
   const { toast } = useToast()
   const [source, setSource] = useState('PARALELO')
   const [usd, setUsd] = useState('')
+  const [eur, setEur] = useState('')
   const [saving, setSaving] = useState(false)
 
   const submit = async () => {
     const v = parseAmount(usd)
+    const ev = parseAmount(eur)
     if (!Number.isFinite(v) || v <= 0 || saving) return
     setSaving(true)
     try {
-      await api.setRate(source, v)
+      await api.setRate(source, v, Number.isFinite(ev) && ev > 0 ? ev : undefined)
       toast({ title: 'Tasa fijada manualmente ✓' })
       onClose()
       setUsd('')
+      setEur('')
       await refreshOverview()
     } catch (e) {
       toast({ title: 'Error', description: (e as Error).message, variant: 'destructive' })
@@ -568,6 +586,10 @@ function ManualRateDialog({ open, onClose }: { open: boolean; onClose: () => voi
           <div>
             <Label>Bs por 1 USD</Label>
             <Input inputMode="decimal" placeholder="0,00" value={usd} onChange={(e) => setUsd(e.target.value)} className="bg-secondary/40 border-white/10 tnum h-12 text-xl font-bold" />
+          </div>
+          <div>
+            <Label>Bs por 1 EUR (opcional)</Label>
+            <Input inputMode="decimal" placeholder="se deriva del cruce €/$ si lo dejas vacío" value={eur} onChange={(e) => setEur(e.target.value)} className="bg-secondary/40 border-white/10 tnum h-11" />
           </div>
           <p className="text-[11px] text-muted-foreground">
             Útil si quieres valorar tu patrimonio con una tasa pactada específica.

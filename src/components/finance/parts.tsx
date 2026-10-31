@@ -284,12 +284,14 @@ export function RateCard({
   color,
   delta,
   onClick,
+  unit = 'por 1 USD',
 }: {
   label: string
   value: number | null
   color: string
   delta?: number | null
   onClick?: () => void
+  unit?: string
 }) {
   return (
     <button
@@ -305,7 +307,7 @@ export function RateCard({
       <p className="tnum text-xl md:text-2xl font-bold mt-2 truncate" title={formatRate(value)}>
         {value != null ? formatRate(value) : '—'}
       </p>
-      <p className="text-[11px] text-muted-foreground mt-1">por 1 USD</p>
+      <p className="text-[11px] text-muted-foreground mt-1">{unit}</p>
     </button>
   )
 }

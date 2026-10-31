@@ -27,6 +27,7 @@ import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { useAppStore } from './store'
 import { api } from './api'
+import { CategoryDialog } from './category-dialog'
 import { useToast } from '@/hooks/use-toast'
 import {
   CURRENCIES,
@@ -42,7 +43,7 @@ import {
   type RateChoice,
 } from '@/lib/finance'
 import { cn } from '@/lib/utils'
-import { ArrowRight, Camera, Check, Trash2 } from 'lucide-react'
+import { ArrowRight, Camera, Check, Plus, Trash2 } from 'lucide-react'
 import type { TxDTO } from './types'
 
 const inputDate = (iso?: string) => {
@@ -69,6 +70,7 @@ export function TransactionDialog() {
   const [reference, setReference] = useState('')
   const [tagIds, setTagIds] = useState<string[]>([])
   const [date, setDate] = useState(inputDate())
+  const [catDialogOpen, setCatDialogOpen] = useState(false)
   const [saving, setSaving] = useState(false)
   const [deleting, setDeleting] = useState(false)
 
@@ -240,6 +242,7 @@ export function TransactionDialog() {
     entryCurrency !== 'VES' ? entryCurrency : currency !== 'VES' ? currency : 'USD'
 
   return (
+    <>
     <Dialog open={txDialog.open} onOpenChange={(o) => !o && closeTxDialog()}>
       <DialogContent className="glass border-white/10 max-h-[92dvh] overflow-y-auto sm:max-w-lg">
         <DialogHeader>
@@ -424,7 +427,16 @@ export function TransactionDialog() {
             </div>
           ) : (
             <div>
-              <label className="text-xs text-muted-foreground mb-1.5 block">Categoría</label>
+              <div className="flex items-center justify-between mb-1.5">
+                <label className="text-xs text-muted-foreground block">Categoría</label>
+                <button
+                  type="button"
+                  onClick={() => setCatDialogOpen(true)}
+                  className="inline-flex items-center gap-0.5 text-[11px] font-semibold text-emerald-400 hover:text-emerald-300 transition-colors"
+                >
+                  <Plus size={11} /> Nueva categoría
+                </button>
+              </div>
               <Select value={categoryId} onValueChange={setCategoryId}>
                 <SelectTrigger className="bg-secondary/40 border-white/10">
                   <SelectValue placeholder="Sin categoría" />
@@ -531,6 +543,13 @@ export function TransactionDialog() {
         </DialogFooter>
       </DialogContent>
     </Dialog>
+    <CategoryDialog
+      open={catDialogOpen}
+      defaultKind={type === 'INCOME' ? 'INCOME' : 'EXPENSE'}
+      onClose={() => setCatDialogOpen(false)}
+      onCreated={(c) => setCategoryId(c.id)}
+    />
+    </>
   )
 }
 

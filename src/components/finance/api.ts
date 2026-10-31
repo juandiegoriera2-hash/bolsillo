@@ -4,7 +4,7 @@
 import type {
   AccountDTO,
   AnalyticsDTO,
-  BudgetDTO,
+  BudgetMonthView,
   Category,
   DebtDTO,
   ExchangeDTO,
@@ -110,11 +110,12 @@ export const api = {
   deleteTag: (id: string) => req<{ ok: boolean }>(`/api/tags/${id}`, { method: 'DELETE' }),
 
   // ── presupuestos ────────────────────────────────────────
-  budgets: () => req<BudgetDTO[]>('/api/budgets'),
+  budgets: (month?: string) =>
+    req<BudgetMonthView>(`/api/budgets${month ? `?month=${month}` : ''}`),
   createBudget: (data: Record<string, unknown>) =>
-    req<BudgetDTO>('/api/budgets', { method: 'POST', body: JSON.stringify(data) }),
+    req<{ ok: boolean }>('/api/budgets', { method: 'POST', body: JSON.stringify(data) }),
   updateBudget: (id: string, data: Record<string, unknown>) =>
-    req<BudgetDTO>(`/api/budgets/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
+    req<{ ok: boolean }>(`/api/budgets/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
   deleteBudget: (id: string) => req<{ ok: boolean }>(`/api/budgets/${id}`, { method: 'DELETE' }),
 
   // ── deudas ──────────────────────────────────────────────

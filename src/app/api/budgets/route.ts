@@ -2,14 +2,17 @@ import { NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import { ensureSeed } from '@/lib/seed'
 import { getRateSnapshot } from '@/lib/rates'
-import { getBudgetStatuses } from '@/lib/queries'
+import { getBudgetMonthView } from '@/lib/queries'
+import { caracasDateKey } from '@/lib/finance'
 
-export async function GET() {
+export async function GET(req: Request) {
   try {
     await ensureSeed()
     const rates = await getRateSnapshot()
-    const budgets = await getBudgetStatuses(rates)
-    return NextResponse.json(budgets)
+    const url = new URL(req.url)
+    const month = url.searchParams.get('month') ?? caracasDateKey().slice(0, 7)
+    const view = await getBudgetMonthView(month, rates)
+    return NextResponse.json(view)
   } catch (e) {
     console.error('[budgets GET]', e)
     return NextResponse.json({ error: 'Error cargando presupuestos' }, { status: 500 })

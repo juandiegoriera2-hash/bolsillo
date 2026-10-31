@@ -175,7 +175,14 @@ export async function getRateSnapshot(opts?: { force?: boolean }): Promise<RateS
   return readSnapshot()
 }
 
-export type RateHistoryPoint = { dateKey: string; bcv: number | null; paralelo: number | null; usdt: number | null }
+export type RateHistoryPoint = {
+  dateKey: string
+  bcv: number | null
+  paralelo: number | null
+  usdt: number | null
+  /** Euro BCV: Bs por 1 € (derivado del cruce EUR/USD) */
+  eur: number | null
+}
 
 /** Historial de los últimos N días (con relleno de huecos hacia adelante) */
 export async function getRatesHistory(days = 30): Promise<RateHistoryPoint[]> {
@@ -183,8 +190,11 @@ export async function getRatesHistory(days = 30): Promise<RateHistoryPoint[]> {
   const map = new Map<string, RateHistoryPoint>()
   for (const r of rows) {
     const p =
-      map.get(r.dateKey) ?? { dateKey: r.dateKey, bcv: null, paralelo: null, usdt: null }
-    if (r.source === 'BCV') p.bcv = r.usd
+      map.get(r.dateKey) ?? { dateKey: r.dateKey, bcv: null, paralelo: null, usdt: null, eur: null }
+    if (r.source === 'BCV') {
+      p.bcv = r.usd
+      p.eur = r.eur
+    }
     if (r.source === 'PARALELO') p.paralelo = r.usd
     if (r.source === 'USDT_P2P') p.usdt = r.usd
     map.set(r.dateKey, p)
@@ -197,18 +207,27 @@ export async function getRatesHistory(days = 30): Promise<RateHistoryPoint[]> {
       if (p.bcv == null) p.bcv = last.bcv
       if (p.paralelo == null) p.paralelo = last.paralelo
       if (p.usdt == null) p.usdt = last.usdt
+      if (p.eur == null) p.eur = last.eur
     }
     last = p
   }
   return all.slice(-days)
 }
 
-/** Tasa manual (el usuario puede fijar cualquier fuente) */
+/** Tasa manual (el usuario puede fijar cualquier fuente). Si no se fija el
+ *  euro, se deriva del último cruce EUR/USD conocido para no perderlo. */
 export async function setManualRate(source: 'BCV' | 'PARALELO' | 'USDT_P2P', usd: number, eur?: number): Promise<void> {
   const dateKey = caracasDateKey()
+  let eurUsd = 1.16
+  const bcvRow = await db.exchangeRate.findFirst({
+    where: { source: 'BCV' },
+    orderBy: [{ dateKey: 'desc' }, { fetchedAt: 'desc' }],
+  })
+  if (bcvRow?.usd && bcvRow.eur) eurUsd = bcvRow.eur / bcvRow.usd
+  const eurVal = eur ?? Math.round(usd * eurUsd * 100) / 100
   await db.exchangeRate.upsert({
     where: { dateKey_source: { dateKey, source } },
-    update: { usd, eur: eur ?? null, manual: true, fetchedAt: new Date() },
-    create: { dateKey, source, usd, eur: eur ?? null, manual: true },
+    update: { usd, eur: eurVal, manual: true, fetchedAt: new Date() },
+    create: { dateKey, source, usd, eur: eurVal, manual: true },
   })
 }

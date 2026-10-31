@@ -54,10 +54,10 @@ export function DashboardView() {
   const history = overview?.history ?? []
   const prevDay = history.length >= 2 ? history[history.length - 2] : null
 
-  const delta = (key: 'bcv' | 'paralelo' | 'usdt') => {
+  const delta = (key: 'bcv' | 'paralelo' | 'usdt' | 'eurBcv') => {
     if (!rates || !prevDay) return null
-    const now = rates[key]
-    const before = prevDay[key]
+    const now = key === 'eurBcv' ? rates.eurBcv : rates[key]
+    const before = key === 'eurBcv' ? prevDay.eur : prevDay[key]
     if (!now || !before) return null
     return ((now - before) / before) * 100
   }
@@ -190,10 +190,11 @@ export function DashboardView() {
       </section>
 
       {/* ── tasas ── */}
-      <section className="grid grid-cols-3 gap-3">
+      <section className="grid grid-cols-2 md:grid-cols-4 gap-3">
         <RateCard label="BCV" value={rates?.bcv ?? null} color="#f5b544" delta={delta('bcv')} onClick={() => setView('rates')} />
         <RateCard label="Paralelo" value={rates?.paralelo ?? null} color="#38e07f" delta={delta('paralelo')} onClick={() => setView('rates')} />
         <RateCard label="USDT P2P" value={rates?.usdt ?? null} color="#2dd4bf" delta={delta('usdt')} onClick={() => setView('rates')} />
+        <RateCard label="Euro BCV" value={rates?.eurBcv ?? null} color="#c084fc" delta={delta('eurBcv')} onClick={() => setView('rates')} unit="por 1 €" />
       </section>
 
       {/* ── acciones rápidas ── */}

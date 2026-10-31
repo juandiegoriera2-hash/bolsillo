@@ -91,6 +91,42 @@ export type BudgetDTO = {
   active: boolean
 }
 
+/** Presupuesto evaluado en un mes concreto (vista calendario) */
+export type BudgetMonthDTO = {
+  id: string
+  name: string
+  categoryId: string | null
+  categoryName: string | null
+  categoryColor: string | null
+  categoryIcon: string | null
+  tagId: string | null
+  tagName: string | null
+  tagColor: string | null
+  limitAmount: number
+  currency: string
+  cycle: 'WEEKLY' | 'BIWEEKLY' | 'MONTHLY' | 'CUSTOM'
+  customDays: number | null
+  active: boolean
+  monthSpend: number
+  monthAllocation: number
+  monthRemaining: number
+  monthPct: number
+  cycleSpent: number | null
+  cyclePct: number | null
+  cycleLabel: string | null
+  cycleDaysLeft: number | null
+}
+
+export type BudgetMonthView = {
+  month: string
+  monthLabel: string
+  isCurrent: boolean
+  budgets: BudgetMonthDTO[]
+  totals: Array<{ currency: string; allocated: number; spent: number; remaining: number }>
+  calendar: Array<{ dateKey: string; expenseUsd: number; txCount: number }>
+  monthExpenseUsd: number
+}
+
 export type DebtDTO = {
   id: string
   kind: 'POR_PAGAR' | 'POR_COBRAR'
@@ -147,6 +183,7 @@ export type RateHistoryPoint = {
   bcv: number | null
   paralelo: number | null
   usdt: number | null
+  eur: number | null
 }
 
 export type AnalyticsDTO = {

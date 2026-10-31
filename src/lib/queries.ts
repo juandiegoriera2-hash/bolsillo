@@ -217,6 +217,188 @@ export type DebtWithPayments = {
   payments: Array<{ id: string; amount: number; note: string | null; date: string }>
 }
 
+// ── Vista mensual de presupuestos (control tipo calendario) ──────
+
+const MONTHS_ES = [
+  'Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio',
+  'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre',
+]
+
+export type BudgetMonthStatus = {
+  id: string
+  name: string
+  categoryId: string | null
+  categoryName: string | null
+  categoryColor: string | null
+  categoryIcon: string | null
+  tagId: string | null
+  tagName: string | null
+  tagColor: string | null
+  limitAmount: number
+  currency: string
+  cycle: string
+  customDays: number | null
+  active: boolean
+  /** Gasto real del mes (en la moneda del presupuesto) */
+  monthSpend: number
+  /** Límite equivalente del mes: mensual → límite; otros ciclos → proporcional */
+  monthAllocation: number
+  monthRemaining: number
+  monthPct: number
+  /** Ciclo actual (solo cuando se consulta el mes en curso) */
+  cycleSpent: number | null
+  cyclePct: number | null
+  cycleLabel: string | null
+  cycleDaysLeft: number | null
+}
+
+export type BudgetMonthView = {
+  month: string // "YYYY-MM"
+  monthLabel: string // "Enero 2026"
+  isCurrent: boolean
+  budgets: BudgetMonthStatus[]
+  totals: Array<{ currency: string; allocated: number; spent: number; remaining: number }>
+  /** Gasto total por día del mes (todas las categorías, en USD) */
+  calendar: Array<{ dateKey: string; expenseUsd: number; txCount: number }>
+  monthExpenseUsd: number
+}
+
+/**
+ * Presupuestos evaluados mes a mes + calendario de gasto diario.
+ * monthSpend suma los gastos del mes que aplican al filtro del presupuesto;
+ * monthAllocation equivale el ciclo al mes (semanal → límite × días/7, etc.).
+ */
+export async function getBudgetMonthView(month: string, rates: RateSnapshot): Promise<BudgetMonthView> {
+  const m = /^(\d{4})-(\d{2})$/.exec(month ?? '')
+  const now = new Date()
+  const y = m ? Number(m[1]) : now.getFullYear()
+  const mo = m ? Number(m[2]) : now.getMonth() + 1 // 1-12
+  const start = new Date(y, mo - 1, 1)
+  const end = new Date(y, mo, 1)
+  const daysInMonth = Math.round((end.getTime() - start.getTime()) / 86400000)
+  const isCurrent = now.getFullYear() === y && now.getMonth() === mo - 1
+
+  const [budgets, tagRows, monthTxs] = await Promise.all([
+    db.budget.findMany({ include: { category: true }, orderBy: { createdAt: 'asc' } }),
+    db.tag.findMany(),
+    db.transaction.findMany({
+      where: { type: 'EXPENSE', date: { gte: start, lt: end } },
+      include: { tags: true },
+    }),
+  ])
+  const tagMap = new Map(tagRows.map((t) => [t.id, t]))
+
+  // calendario: gasto diario de todos los gastos del mes (USD)
+  const dayMap = new Map<string, { expenseUsd: number; txCount: number }>()
+  let monthExpenseUsd = 0
+  for (const t of monthTxs) {
+    const usd = txToUsd(t.amount, t.currency, t.rateVesUsd, rates)
+    monthExpenseUsd += usd
+    const dk = caracasDateKey(t.date)
+    const d = dayMap.get(dk) ?? { expenseUsd: 0, txCount: 0 }
+    d.expenseUsd += usd
+    d.txCount++
+    dayMap.set(dk, d)
+  }
+  const calendar: Array<{ dateKey: string; expenseUsd: number; txCount: number }> = []
+  for (let d = 1; d <= daysInMonth; d++) {
+    const dk = `${y}-${String(mo).padStart(2, '0')}-${String(d).padStart(2, '0')}`
+    const v = dayMap.get(dk)
+    calendar.push({ dateKey: dk, expenseUsd: v?.expenseUsd ?? 0, txCount: v?.txCount ?? 0 })
+  }
+
+  const result: BudgetMonthStatus[] = []
+  for (const b of budgets) {
+    const tag = b.tagId ? tagMap.get(b.tagId) : null
+    const matches = (t: (typeof monthTxs)[number]) =>
+      (!b.categoryId || t.categoryId === b.categoryId) &&
+      (!b.tagId || t.tags.some((tt) => tt.tagId === b.tagId))
+    const monthSpend = monthTxs
+      .filter(matches)
+      .reduce(
+        (s, t) => s + txToBudgetCurrency(t.amount, t.currency, t.rateVesUsd, b.currency, rates),
+        0
+      )
+
+    // equivalente mensual del límite según el ciclo
+    const cycleDays =
+      b.cycle === 'WEEKLY' ? 7 : b.cycle === 'BIWEEKLY' ? 15 : b.cycle === 'MONTHLY' ? 0 : Math.max(1, b.customDays ?? 30)
+    const monthAllocation =
+      b.cycle === 'MONTHLY'
+        ? b.limitAmount
+        : Math.round(b.limitAmount * (daysInMonth / cycleDays) * 100) / 100
+
+    // ciclo actual (solo si se consulta el mes en curso)
+    let cycleSpent: number | null = null
+    let cyclePct: number | null = null
+    let cycleLabel: string | null = null
+    let cycleDaysLeft: number | null = null
+    if (isCurrent) {
+      const w = budgetCycleWindow(b)
+      const cycleTxs = await db.transaction.findMany({
+        where: {
+          type: 'EXPENSE',
+          date: { gte: w.start, lt: w.end },
+          ...(b.categoryId ? { categoryId: b.categoryId } : {}),
+          ...(b.tagId ? { tags: { some: { tagId: b.tagId } } } : {}),
+        },
+      })
+      cycleSpent = cycleTxs.reduce(
+        (s, t) => s + txToBudgetCurrency(t.amount, t.currency, t.rateVesUsd, b.currency, rates),
+        0
+      )
+      cyclePct = b.limitAmount > 0 ? Math.min(999, (cycleSpent / b.limitAmount) * 100) : 0
+      cycleLabel = w.label
+      cycleDaysLeft = Math.max(0, Math.ceil((w.end.getTime() - now.getTime()) / 86400000))
+    }
+
+    result.push({
+      id: b.id,
+      name: b.name,
+      categoryId: b.categoryId,
+      categoryName: b.category?.name ?? null,
+      categoryColor: b.category?.color ?? null,
+      categoryIcon: b.category?.icon ?? null,
+      tagId: b.tagId ?? null,
+      tagName: tag?.name ?? null,
+      tagColor: tag?.color ?? null,
+      limitAmount: b.limitAmount,
+      currency: b.currency,
+      cycle: b.cycle,
+      customDays: b.customDays ?? null,
+      active: b.active,
+      monthSpend,
+      monthAllocation,
+      monthRemaining: monthAllocation - monthSpend,
+      monthPct: monthAllocation > 0 ? Math.min(999, (monthSpend / monthAllocation) * 100) : 0,
+      cycleSpent,
+      cyclePct,
+      cycleLabel,
+      cycleDaysLeft,
+    })
+  }
+
+  // totales por moneda
+  const totalsMap = new Map<string, { currency: string; allocated: number; spent: number; remaining: number }>()
+  for (const s of result) {
+    const cur = totalsMap.get(s.currency) ?? { currency: s.currency, allocated: 0, spent: 0, remaining: 0 }
+    cur.allocated += s.monthAllocation
+    cur.spent += s.monthSpend
+    cur.remaining += s.monthRemaining
+    totalsMap.set(s.currency, cur)
+  }
+
+  return {
+    month: `${y}-${String(mo).padStart(2, '0')}`,
+    monthLabel: `${MONTHS_ES[mo - 1]} ${y}`,
+    isCurrent,
+    budgets: result,
+    totals: [...totalsMap.values()],
+    calendar,
+    monthExpenseUsd,
+  }
+}
+
 export async function getDebtsWithPayments(rates: RateSnapshot): Promise<DebtWithPayments[]> {
   const debts = await db.debt.findMany({
     include: { payments: { orderBy: { date: 'desc' } } },

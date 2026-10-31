@@ -3,11 +3,12 @@
 import { useState } from 'react'
 import { useAppStore } from '../store'
 import { api } from '../api'
-import { ViewHeader, CatIcon } from '../parts'
+import { ViewHeader, CatIcon, ICONS } from '../parts'
+import { CategoryDialog } from '../category-dialog'
+import type { Category } from '../types'
 import { useToast } from '@/hooks/use-toast'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { Badge } from '@/components/ui/badge'
 import {
   AlertDialog,
   AlertDialogAction,
@@ -26,7 +27,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
-import { ArrowDownToLine, Banknote, Database, Download, Plus, Smartphone, Tags, Trash2 } from 'lucide-react'
+import { ArrowDownToLine, Banknote, Database, Download, Plus, Shapes, Smartphone, Tags, Trash2 } from 'lucide-react'
 
 export function SettingsView() {
   const { overview, refreshOverview, refreshMeta, categories, tags, canInstall, installEvent } = useAppStore()
@@ -34,6 +35,7 @@ export function SettingsView() {
   const [baseCurrency, setBaseCurrency] = useState(overview?.settings.baseCurrency ?? 'VES')
   const [valuationSource, setValuationSource] = useState(overview?.settings.valuationSource ?? 'PARALELO')
   const [newTag, setNewTag] = useState('')
+  const [catOpen, setCatOpen] = useState(false)
   const [wiping, setWiping] = useState(false)
 
   const saveSettings = async (data: { baseCurrency?: string; valuationSource?: string }) => {
@@ -76,6 +78,17 @@ export function SettingsView() {
       await refreshMeta()
     } catch (e) {
       toast({ title: 'Error', description: (e as Error).message, variant: 'destructive' })
+    }
+  }
+
+  const delCategory = async (c: Category) => {
+    if (!confirm(`¿Eliminar la categoría "${c.name}"?`)) return
+    try {
+      await api.deleteCategory(c.id)
+      await refreshMeta()
+      toast({ title: 'Categoría eliminada' })
+    } catch (e) {
+      toast({ title: 'No se pudo eliminar', description: (e as Error).message, variant: 'destructive' })
     }
   }
 
@@ -190,18 +203,64 @@ export function SettingsView() {
             <Plus size={14} className="mr-1" /> Crear
           </Button>
         </div>
+      </section>
 
-        <div className="mt-4 pt-4 border-t border-white/5">
-          <p className="text-[11px] text-muted-foreground mb-2">Categorías del sistema</p>
-          <div className="flex flex-wrap gap-1.5">
-            {categories.slice(0, 12).map((c) => (
-              <Badge key={c.id} variant="outline" className="border-white/10 text-muted-foreground font-normal">
-                <span className="w-1.5 h-1.5 rounded-full mr-1" style={{ backgroundColor: c.color }} />
-                {c.name}
-              </Badge>
-            ))}
+      {/* categorías */}
+      <section className="glass rounded-2xl p-5 mb-4">
+        <div className="flex items-start justify-between gap-3 mb-1">
+          <div>
+            <h3 className="font-semibold text-sm mb-1 flex items-center gap-2">
+              <Shapes size={15} className="text-emerald-400" /> Categorías
+            </h3>
+            <p className="text-[11px] text-muted-foreground">
+              Crea categorías propias con ícono y color. Las predeterminadas no se pueden borrar.
+            </p>
           </div>
+          <Button
+            size="sm"
+            onClick={() => setCatOpen(true)}
+            className="bg-emerald-400 text-emerald-950 hover:bg-emerald-300 font-semibold h-8 shrink-0"
+          >
+            <Plus size={14} className="mr-1" /> Nueva
+          </Button>
         </div>
+
+        {(['EXPENSE', 'INCOME'] as const).map((kind) => {
+          const list = categories.filter((c) => c.kind === kind)
+          if (list.length === 0) return null
+          return (
+            <div key={kind} className={kind === 'EXPENSE' ? 'mt-4' : 'mt-4 pt-4 border-t border-white/5'}>
+              <p className="text-[11px] text-muted-foreground mb-2">
+                {kind === 'EXPENSE' ? 'Gastos' : 'Ingresos'} · {list.length}
+              </p>
+              <div className="flex flex-wrap gap-1.5">
+                {list.map((c) => {
+                  const Ico = ICONS[c.icon]
+                  return (
+                    <span
+                      key={c.id}
+                      className="inline-flex items-center gap-1.5 rounded-full pl-1.5 pr-2.5 py-1 text-xs font-medium"
+                      style={{ backgroundColor: `${c.color}1c`, color: c.color }}
+                      title={c.isDefault ? 'Categoría predeterminada' : 'Categoría personalizada'}
+                    >
+                      {Ico ? <Ico size={12} /> : <CatIcon icon={c.icon} color={c.color} size={8} />}
+                      {c.name}
+                      {!c.isDefault && (
+                        <button
+                          onClick={() => delCategory(c)}
+                          className="opacity-50 hover:opacity-100"
+                          aria-label={`Eliminar ${c.name}`}
+                        >
+                          <Trash2 size={11} />
+                        </button>
+                      )}
+                    </span>
+                  )
+                })}
+              </div>
+            </div>
+          )
+        })}
       </section>
 
       {/* datos */}
@@ -292,6 +351,8 @@ export function SettingsView() {
           Luego: Safari → Compartir → “Agregar a pantalla de inicio”
         </p>
       </section>
+
+      <CategoryDialog open={catOpen} onClose={() => setCatOpen(false)} />
 
       {/* acerca de */}
       <section className="glass rounded-2xl p-5">

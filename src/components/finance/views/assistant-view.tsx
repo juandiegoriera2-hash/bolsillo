@@ -21,6 +21,7 @@ type Msg = {
 const SUGGESTIONS = [
   'Gasté 4.500 Bs en almuerzo',
   'Recibí 50$ de freelance en Zinli',
+  'Créame un presupuesto de 60$ para café',
   'Cuánto he gastado esta semana',
   'Me pagaron la quincena 155.000 Bs',
 ]

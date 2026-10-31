@@ -8,7 +8,7 @@ import { z } from 'zod'
 import { db } from '@/lib/db'
 import { chatText, extractJson } from '@/lib/ai'
 import { getRateSnapshot } from '@/lib/rates'
-import { getAccountsWithBalances, getAnalytics, getSettings } from '@/lib/queries'
+import { getAccountsWithBalances, getAnalytics, getBudgetStatuses, getSettings } from '@/lib/queries'
 import {
   caracasDateKey,
   convertCurrency,
@@ -23,7 +23,7 @@ import { serializeTx, TX_INCLUDE } from '@/lib/dto'
 
 export type ChatActionResult = {
   ok: boolean
-  kind: 'transaction' | 'transfer'
+  kind: 'transaction' | 'transfer' | 'budget'
   message: string
   transaction?: ReturnType<typeof serializeTx>
 }
@@ -65,7 +65,30 @@ const TransferAction = z.object({
   }),
 })
 
-const ActionSchema = z.discriminatedUnion('type', [TransactionAction, TransferAction])
+const BudgetAction = z.object({
+  type: z.literal('create_budget'),
+  budget: z.object({
+    name: z.string().min(1),
+    limitAmount: z.preprocess(
+      (v) => (typeof v === 'string' ? parseAmount(v) : v),
+      z.number().positive()
+    ),
+    currency: z.enum(['USD', 'VES']).optional(),
+    cycle: z.enum(['WEEKLY', 'BIWEEKLY', 'MONTHLY', 'CUSTOM']).optional(),
+    customDays: z.number().int().min(1).max(365).optional(),
+    category: z.string().optional(),
+    tag: z.string().optional(),
+  }),
+})
+
+const ActionSchema = z.discriminatedUnion('type', [TransactionAction, TransferAction, BudgetAction])
+
+const CYCLE_LABEL: Record<string, string> = {
+  WEEKLY: 'semana',
+  BIWEEKLY: 'quincena',
+  MONTHLY: 'mes',
+  CUSTOM: 'ciclo personalizado',
+}
 
 const norm = (s: string) =>
   s
@@ -159,10 +182,11 @@ function autoConvert(
 
 async function buildContext(): Promise<string> {
   const rates = await getRateSnapshot()
-  const [settings, accounts, analytics] = await Promise.all([
+  const [settings, accounts, analytics, budgets] = await Promise.all([
     getSettings(),
     getAccountsWithBalances(rates),
     getAnalytics(7, rates),
+    getBudgetStatuses(rates),
   ])
   const [categories, tags, recent, debts] = await Promise.all([
     db.category.findMany(),
@@ -192,6 +216,20 @@ async function buildContext(): Promise<string> {
     `Categorías de ingreso: ${categories.filter((c) => c.kind === 'INCOME').map((c) => c.name).join(', ')}`
   )
   lines.push(`Etiquetas: ${tags.map((t) => t.name).join(', ') || 'sin etiquetas'}`)
+  if (budgets.length)
+    lines.push(
+      `Presupuestos: ${budgets
+        .map(
+          (b) =>
+            `${b.name} (${formatMoney(b.limitAmount, b.currency as Currency)} por ${
+              CYCLE_LABEL[b.cycle] ?? 'mes'
+            }, gastado ${formatMoney(b.spent, b.currency as Currency)} de ${formatMoney(
+              b.limitAmount,
+              b.currency as Currency
+            )} en ${b.cycle === 'MONTHLY' ? 'el mes' : 'el ciclo'})`
+        )
+        .join(' · ')}`
+    )
   lines.push(
     `Gasto últimos 7 días: ${fmt(analytics.expenseUsd)} (semana anterior: ${fmt(analytics.prevExpenseUsd)}). Ingresos 7 días: ${fmt(analytics.incomeUsd)}.`
   )
@@ -254,12 +292,16 @@ Cuando el usuario registre un movimiento ("gasté 450 en almuerzo", "me pagaron 
 Para mover dinero entre SUS cuentas usa:
 { "type": "create_transfer", "transfer": { "amount": 20, "currency": "USD", "from": "Zinli", "to": "Efectivo $", "description": "..." } }
 
+Para crear o ajustar presupuestos usa:
+{ "type": "create_budget", "budget": { "name": "Mercado", "limitAmount": 200, "currency": "USD" o "VES", "cycle": "MONTHLY" o "WEEKLY" o "BIWEEKLY" o "CUSTOM", "customDays": 15, "category": "Comida y bebidas", "tag": "gasto hormiga" } }
+
 REGLAS:
 - FORMATO VENEZOLANO DE NÚMEROS (crítico): el usuario escribe "50.000" o "50,000" para CINCUENTA MIL, y "50,5" para cincuenta y medio. En "amount" devuelve SIEMPRE el número JSON puro, sin separadores de miles y sin comillas: "gasté 50.000 bs" → "amount": 50000 · "gasté 1.5 millones" → "amount": 1500000 · "pagué 12,50 dólares" → "amount": 12.5. NUNCA devuelvas "amount": "50.000" (string) ni 50.000 (que es solo 50).
 - "actions": [] cuando solo pregunta o conversa. Entonces usa el contexto para responder con cifras concretas.
 - Moneda: "$"/"dólares" → USD; "Bs"/"bolívares" → VES; "usdt" → USDT; "€"/"euros" → EUR. Devuelve "currency" SIEMPRE que el usuario mencione una moneda; si no menciona ninguna, omite el campo.
 - CONVERSIÓN AUTOMÁTICA: si la moneda del monto no coincide con la de la cuenta destino, el sistema la convierte solo con la tasa del día (BCV por defecto; paralelo o binance si el usuario lo pide) y la registra en la moneda de la cuenta. Anúncialo en "reply" con el monto original y su equivalente aproximado (ej: "anoté los $12, que a BCV de hoy son unos Bs 10.671"). No calcules de memoria con precisión: el sistema convierte exacto.
 - Gasto pequeño (café, snack, dulce, empanada) → etiqueta "gasto hormiga".
+- PRESUPUESTOS: cuando el usuario pida "ponme un presupuesto de X para Y", "límite de X en Y", "quiero controlar X", crea un create_budget. Ciclo por defecto MONTHLY (usa WEEKLY solo si dice "semanal", BIWEEKLY si dice "quincenal"). Moneda del límite por defecto USD (indexado) salvo que diga Bs/bolívares. "category"/"tag" solo si el presupuesto aplica a una categoría o etiqueta del contexto; si es para el gasto total, omítelos. Usa un nombre corto y claro ("Mercado", "Café", "Transporte"). Si ya existe un presupuesto con ese nombre, el sistema actualiza su límite en vez de duplicarlo.
 - No inventes cuentas ni categorías: usa las del contexto o omite el campo.
 - "ayer" → fecha de ayer en YYYY-MM-DD.
 - Si pregunta cuánto ha gastado, responde con los totales del contexto.
@@ -455,10 +497,80 @@ async function executeActions(raw: unknown, userMessage = ''): Promise<ChatActio
           message: `Transferencia de ${formatMoney(amount, fromCurrency)}${conversionNote} · ${from.name} → ${to.name}`,
           transaction: full ? serializeTx(full) : undefined,
         })
+      } else if (action.type === 'create_budget') {
+        const b = action.budget
+        const limit = correctActionAmount(b.limitAmount, userAmounts)
+        const currency: 'USD' | 'VES' =
+          b.currency ?? (detectCurrency(userMessage) === 'VES' ? 'VES' : 'USD')
+        const cycle = b.cycle ?? 'MONTHLY'
+
+        // categoría (fuzzy, igual que en movimientos)
+        let categoryId: string | null = null
+        let categoryName: string | null = null
+        if (b.category) {
+          const expenseCats = await db.category.findMany({ where: { kind: 'EXPENSE' } })
+          const allCats = expenseCats.length ? expenseCats : await db.category.findMany()
+          const cat = allCats.find(
+            (c) => norm(c.name).includes(norm(b.category!)) || norm(b.category!).includes(norm(c.name))
+          )
+          categoryId = cat?.id ?? null
+          categoryName = cat?.name ?? null
+        }
+        let tagId: string | null = null
+        let tagName: string | null = null
+        if (b.tag) {
+          const tag = await db.tag.findFirst({ where: { name: { contains: b.tag } } })
+          tagId = tag?.id ?? null
+          tagName = tag?.name ?? null
+        }
+
+        const name = b.name.trim()
+        const existing = await db.budget.findMany()
+        const dup = existing.find((x) => norm(x.name) === norm(name))
+        const cycleLabel = CYCLE_LABEL[cycle] ?? 'mes'
+        if (dup) {
+          await db.budget.update({
+            where: { id: dup.id },
+            data: {
+              limitAmount: limit,
+              currency,
+              cycle,
+              customDays: cycle === 'CUSTOM' ? (b.customDays ?? dup.customDays ?? 30) : null,
+              ...(categoryId ? { categoryId } : {}),
+              ...(tagId ? { tagId } : {}),
+            },
+          })
+        } else {
+          await db.budget.create({
+            data: {
+              name,
+              categoryId,
+              tagId,
+              limitAmount: limit,
+              currency,
+              cycle,
+              customDays: cycle === 'CUSTOM' ? (b.customDays ?? 30) : null,
+              startDate: new Date(),
+            },
+          })
+        }
+        const scope = categoryName
+          ? ` · ${categoryName}`
+          : tagName
+            ? ` · #${tagName}`
+            : ' · todos los gastos'
+        results.push({
+          ok: true,
+          kind: 'budget',
+          message: `${dup ? 'Presupuesto actualizado' : 'Presupuesto creado'}: "${name}" · ${formatMoney(
+            limit,
+            currency
+          )} por ${cycleLabel}${scope}`,
+        })
       }
     } catch (e) {
       console.error('[assistant action]', e)
-      results.push({ ok: false, kind: 'transaction', message: 'No pude registrar el movimiento' })
+      results.push({ ok: false, kind: 'transaction', message: 'No pude completar la acción' })
     }
   }
   return results

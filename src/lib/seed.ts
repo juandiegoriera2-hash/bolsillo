@@ -583,7 +583,8 @@ export async function wipeData(reseedDemo: boolean): Promise<void> {
     return
   }
 
-  // empieza de cero: conservar el catálogo base (no hay UI para recrearlo)
+  // empieza de cero: conservar el catálogo base (las personalizadas se
+  // pueden recrear desde Ajustes → Categorías → Nueva)
   await db.category.deleteMany({ where: { isDefault: false } })
   seedPromise = null
 
