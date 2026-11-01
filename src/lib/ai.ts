@@ -17,6 +17,17 @@ function getZai(): Promise<any> {
   return instance
 }
 
+/** ¿El error parece de autenticación (token caducado/rotado)? */
+function isAuthError(e: unknown): boolean {
+  const msg = e instanceof Error ? e.message : String(e)
+  return /\b401\b|unauthorized|x-token|api key|credencial/i.test(msg)
+}
+
+/** Invalida la instancia cacheada — la próxima llamada relee la config fresca */
+function resetZai(): void {
+  instance = null
+}
+
 // ── Proveedor OpenAI-compatible (opcional, producción) ───────────
 type OpenAiCfg = { base: string; key: string; model: string; visionModel: string }
 
@@ -60,16 +71,27 @@ export type SimpleMessage = { role: 'user' | 'assistant'; content: string }
 /** Chat de texto (system prompt va como primer mensaje 'assistant' según el SDK) */
 export async function chatText(messages: SimpleMessage[]): Promise<string> {
   // 1) z-ai (entorno de desarrollo)
-  try {
-    const zai = await getZai()
-    const completion = await zai.chat.completions.create({
-      messages,
-      thinking: { type: 'disabled' },
-    })
-    const out = completion?.choices?.[0]?.message?.content ?? ''
-    if (out) return out
-  } catch {
-    /* sin credenciales fuera del entorno de desarrollo */
+  //    Reintenta 1 vez con config fresca si el token cacheado caducó (rotación).
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const zai = await getZai()
+      const completion = await zai.chat.completions.create({
+        messages,
+        thinking: { type: 'disabled' },
+      })
+      const out = completion?.choices?.[0]?.message?.content ?? ''
+      if (out) return out
+      console.warn('[ai] zai chat respondió vacío')
+      break
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e)
+      console.error('[ai] zai chat falló:', msg)
+      if (attempt === 0 && isAuthError(e)) {
+        resetZai() // token caducado → releer config y reintentar
+        continue
+      }
+      break
+    }
   }
   // 2) OpenAI-compatible (producción)
   const cfg = openAiConfig()
@@ -80,24 +102,33 @@ export async function chatText(messages: SimpleMessage[]): Promise<string> {
 /** Visión (VLM) sobre una imagen data-URL */
 export async function visionText(prompt: string, imageDataUrl: string): Promise<string> {
   // 1) z-ai (entorno de desarrollo)
-  try {
-    const zai = await getZai()
-    const completion = await zai.chat.completions.createVision({
-      messages: [
-        {
-          role: 'user',
-          content: [
-            { type: 'text', text: prompt },
-            { type: 'image_url', image_url: { url: imageDataUrl } },
-          ],
-        },
-      ],
-      thinking: { type: 'disabled' },
-    })
-    const out = completion?.choices?.[0]?.message?.content ?? ''
-    if (out) return out
-  } catch {
-    /* sin credenciales fuera del entorno de desarrollo */
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const zai = await getZai()
+      const completion = await zai.chat.completions.createVision({
+        messages: [
+          {
+            role: 'user',
+            content: [
+              { type: 'text', text: prompt },
+              { type: 'image_url', image_url: { url: imageDataUrl } },
+            ],
+          },
+        ],
+        thinking: { type: 'disabled' },
+      })
+      const out = completion?.choices?.[0]?.message?.content ?? ''
+      if (out) return out
+      console.warn('[ai] zai vision respondió vacío')
+      break
+    } catch (e) {
+      console.error('[ai] zai vision falló:', e instanceof Error ? e.message : e)
+      if (attempt === 0 && isAuthError(e)) {
+        resetZai()
+        continue
+      }
+      break
+    }
   }
   // 2) OpenAI-compatible con modelo de visión (producción)
   const cfg = openAiConfig()
@@ -121,13 +152,26 @@ export async function visionText(prompt: string, imageDataUrl: string): Promise<
 
 /** Transcripción de voz (ASR) desde base64 — solo z-ai (sin equivalente universal gratis) */
 export async function transcribeAudio(fileBase64: string): Promise<string> {
-  try {
-    const zai = await getZai()
-    const response = await zai.audio.asr.create({ file_base64: fileBase64 })
-    return (response?.text ?? '').trim()
-  } catch {
-    throw new Error(NO_AI_MSG)
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const zai = await getZai()
+      const response = await zai.audio.asr.create({ file_base64: fileBase64 })
+      return (response?.text ?? '').trim()
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e)
+      console.error('[ai] zai asr falló:', msg)
+      // sin archivo de config → IA no disponible en este despliegue (503)
+      if (/configuration file not found/i.test(msg)) throw new Error(NO_AI_MSG)
+      if (attempt === 0 && isAuthError(e)) {
+        resetZai() // token caducado → releer config y reintentar
+        continue
+      }
+      // otros errores (audio muy corto, silencio, formato…) se reportan tal cual
+      // para que la ruta los distinga de “IA no disponible” (422)
+      throw e instanceof Error ? e : new Error(String(e))
+    }
   }
+  throw new Error(NO_AI_MSG)
 }
 
 /** Extrae el primer objeto JSON válido de una respuesta de LLM */

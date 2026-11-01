@@ -5,6 +5,8 @@ import { db } from '@/lib/db'
 import {
   budgetCycleWindow,
   caracasDateKey,
+  caracasMonthBounds,
+  caracasShifted,
   toUsd,
   type Currency,
   type RateSnapshot,
@@ -271,12 +273,14 @@ export type BudgetMonthView = {
 export async function getBudgetMonthView(month: string, rates: RateSnapshot): Promise<BudgetMonthView> {
   const m = /^(\d{4})-(\d{2})$/.exec(month ?? '')
   const now = new Date()
-  const y = m ? Number(m[1]) : now.getFullYear()
-  const mo = m ? Number(m[2]) : now.getMonth() + 1 // 1-12
-  const start = new Date(y, mo - 1, 1)
-  const end = new Date(y, mo, 1)
+  const nowC = caracasShifted(now) // componentes en hora Venezuela
+  const y = m ? Number(m[1]) : nowC.getUTCFullYear()
+  const mo = m ? Number(m[2]) : nowC.getUTCMonth() + 1 // 1-12
+  // límites del mes alineados a medianoche Caracas (00:00 VET = 04:00 UTC)
+  // para que los gastos de la noche (8pm–12am) cuenten en el mes correcto
+  const { start, end } = caracasMonthBounds(`${y}-${String(mo).padStart(2, '0')}`)
   const daysInMonth = Math.round((end.getTime() - start.getTime()) / 86400000)
-  const isCurrent = now.getFullYear() === y && now.getMonth() === mo - 1
+  const isCurrent = nowC.getUTCFullYear() === y && nowC.getUTCMonth() === mo - 1
 
   const [budgets, tagRows, monthTxs] = await Promise.all([
     db.budget.findMany({ include: { category: true }, orderBy: { createdAt: 'asc' } }),

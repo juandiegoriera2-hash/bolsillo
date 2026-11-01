@@ -46,6 +46,29 @@ export function caracasDateKey(d: Date = new Date()): string {
   return new Date(d.getTime() - 4 * 3600000).toISOString().slice(0, 10)
 }
 
+/** Fecha desplazada a "coordenadas Caracas": sus componentes
+ *  getFullYear/getMonth/getDate/getDay corresponden a la hora local de
+ *  Venezuela. Úsala SOLO para lógica de calendario (meses, semanas); para
+ *  guardar o comparar instantes absolutos usa la fecha original. */
+export function caracasShifted(d: Date = new Date()): Date {
+  return new Date(d.getTime() - 4 * 3600000)
+}
+
+/** Límites UTC reales del mes "YYYY-MM" en horario Caracas.
+ *  Ej: "2026-10" → [2026-10-01 04:00 UTC, 2026-11-01 04:00 UTC)
+ *  (las 00:00 de Venezuela son las 04:00 UTC). Así los movimientos de la
+ *  noche (8pm–12am VET) cuentan en el mes correcto. */
+export function caracasMonthBounds(month: string): { start: Date; end: Date } {
+  const m = /^(\d{4})-(\d{2})$/.exec(month)
+  const nowC = caracasShifted()
+  const y = m ? Number(m[1]) : nowC.getFullYear()
+  const mo = m ? Number(m[2]) : nowC.getMonth() + 1
+  return {
+    start: new Date(Date.UTC(y, mo - 1, 1, 4, 0, 0)),
+    end: new Date(Date.UTC(y, mo, 1, 4, 0, 0)),
+  }
+}
+
 /** Fecha local Caracas a partir de un dateKey (mediodía, seguro para TZ) */
 export function dateKeyToDate(key: string): Date {
   return new Date(`${key}T12:00:00`)
@@ -186,24 +209,26 @@ export function formatRate(rate: number | null | undefined): string {
 
 // ── Ciclos de presupuesto ────────────────────────────────────────
 
-/** Devuelve {start, end, label} del ciclo actual del presupuesto */
+/** Devuelve {start, end, label} del ciclo actual del presupuesto
+ *  (ventanas alineadas a medianoche hora Caracas: 00:00 VET = 04:00 UTC) */
 export function budgetCycleWindow(
   budget: { cycle: string; startDate: Date | string; customDays?: number | null },
   now: Date = new Date()
 ): { start: Date; end: Date; label: string } {
   const start = new Date(budget.startDate)
+  const nowC = caracasShifted(now) // componentes en hora Venezuela
   if (budget.cycle === 'WEEKLY') {
-    const s = new Date(now)
-    const day = (s.getDay() + 6) % 7 // lunes = 0
-    s.setDate(s.getDate() - day)
-    s.setHours(0, 0, 0, 0)
-    const e = new Date(s)
-    e.setDate(e.getDate() + 7)
+    const day = (nowC.getUTCDay() + 6) % 7 // lunes = 0 (hora Caracas)
+    const sC = new Date(nowC)
+    sC.setUTCDate(sC.getUTCDate() - day)
+    sC.setUTCHours(0, 0, 0, 0) // lunes 00:00 en coordenadas Caracas
+    const s = new Date(sC.getTime() + 4 * 3600000) // → instante UTC real
+    const e = new Date(s.getTime() + 7 * 86400000)
     return { start: s, end: e, label: 'semana actual' }
   }
   if (budget.cycle === 'MONTHLY') {
-    const s = new Date(now.getFullYear(), now.getMonth(), 1)
-    const e = new Date(now.getFullYear(), now.getMonth() + 1, 1)
+    const s = new Date(Date.UTC(nowC.getUTCFullYear(), nowC.getUTCMonth(), 1, 4, 0, 0))
+    const e = new Date(Date.UTC(nowC.getUTCFullYear(), nowC.getUTCMonth() + 1, 1, 4, 0, 0))
     return { start: s, end: e, label: 'mes actual' }
   }
   const days = budget.cycle === 'BIWEEKLY' ? 15 : Math.max(1, budget.customDays ?? 30)

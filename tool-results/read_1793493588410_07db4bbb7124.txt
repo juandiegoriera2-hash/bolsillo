@@ -1,0 +1,610 @@
+     1→'use client'
+     2→
+     3→import { useEffect, useMemo, useState } from 'react'
+     4→import { useAppStore } from '../store'
+     5→import { api } from '../api'
+     6→import { CurrencyBadge, DeltaBadge, EmptyState, ViewHeader } from '../parts'
+     7→import { dateKeyShort, fullDateTime, shortDate } from '../fmt'
+     8→import { formatMoney, formatRate, parseAmount } from '@/lib/finance'
+     9→import { useToast } from '@/hooks/use-toast'
+    10→import { Button } from '@/components/ui/button'
+    11→import { Input } from '@/components/ui/input'
+    12→import { Label } from '@/components/ui/label'
+    13→import {
+    14→  Dialog,
+    15→  DialogContent,
+    16→  DialogFooter,
+    17→  DialogHeader,
+    18→  DialogTitle,
+    19→} from '@/components/ui/dialog'
+    20→import {
+    21→  Select,
+    22→  SelectContent,
+    23→  SelectItem,
+    24→  SelectTrigger,
+    25→  SelectValue,
+    26→} from '@/components/ui/select'
+    27→import { Skeleton } from '@/components/ui/skeleton'
+    28→import { cn } from '@/lib/utils'
+    29→import { ResponsiveContainer, LineChart, Line, XAxis, YAxis, Tooltip, Legend } from 'recharts'
+    30→import { ArrowLeftRight, Pencil, RefreshCw, TrendingDown, TrendingUp } from 'lucide-react'
+    31→import type { ExchangeDTO, RateHistoryPoint } from '../types'
+    32→
+    33→const SOURCE_COLORS: Record<string, string> = {
+    34→  BCV: '#f5b544',
+    35→  PARALELO: '#38e07f',
+    36→  USDT_P2P: '#2dd4bf',
+    37→  EUR: '#c084fc',
+    38→}
+    39→
+    40→type RateKey = 'bcv' | 'paralelo' | 'usdt' | 'eurBcv'
+    41→
+    42→/** valor actual de una tasa desde el snapshot */
+    43→const snapValue = (rates: { bcv: number | null; paralelo: number | null; usdt: number | null; eurBcv: number | null } | null | undefined, key: RateKey) =>
+    44→  key === 'eurBcv' ? rates?.eurBcv ?? null : rates?.[key] ?? null
+    45→
+    46→/** valor de una tasa en un punto del historial */
+    47→const histValue = (h: RateHistoryPoint, key: RateKey) =>
+    48→  key === 'eurBcv' ? h.eur : h[key]
+    49→
+    50→export function RatesView() {
+    51→  const { overview, refreshOverview } = useAppStore()
+    52→  const { toast } = useToast()
+    53→  const [history, setHistory] = useState<RateHistoryPoint[] | null>(null)
+    54→  const [exchanges, setExchanges] = useState<{ items: ExchangeDTO[]; gainedUsd: number; lostUsd: number; netUsd: number } | null>(null)
+    55→  const [exchangeOpen, setExchangeOpen] = useState(false)
+    56→  const [manualOpen, setManualOpen] = useState(false)
+    57→  const [visible, setVisible] = useState<string[]>(['bcv', 'paralelo', 'usdt', 'eurBcv'])
+    58→  const [refreshing, setRefreshing] = useState(false)
+    59→
+    60→  const rates = overview?.rates
+    61→  const hist = history ?? overview?.history ?? []
+    62→
+    63→  const loadExchanges = async () => {
+    64→    const [h, e] = await Promise.all([api.rates(), api.exchanges()])
+    65→    setHistory(h.history)
+    66→    setExchanges(e)
+    67→  }
+    68→  useEffect(() => {
+    69→    loadExchanges().catch(() => {})
+    70→  }, [])
+    71→
+    72→  const chartData = hist.map((h) => ({
+    73→    day: dateKeyShort(h.dateKey),
+    74→    bcv: h.bcv ? +h.bcv.toFixed(2) : null,
+    75→    paralelo: h.paralelo ? +h.paralelo.toFixed(2) : null,
+    76→    usdt: h.usdt ? +h.usdt.toFixed(2) : null,
+    77→    eurBcv: h.eur ? +h.eur.toFixed(2) : null,
+    78→  }))
+    79→
+    80→  const variation = (key: RateKey) => {
+    81→    if (hist.length < 2 || !rates) return null
+    82→    const before = histValue(hist[hist.length - 2], key)
+    83→    const now = snapValue(rates, key)
+    84→    if (!now || !before) return null
+    85→    return ((now - before) / before) * 100
+    86→  }
+    87→
+    88→  const monthVar = (key: RateKey) => {
+    89→    if (hist.length < 8 || !rates) return null
+    90→    const before = histValue(hist[hist.length - 8], key)
+    91→    const now = snapValue(rates, key)
+    92→    if (!now || !before) return null
+    93→    return ((now - before) / before) * 100
+    94→  }
+    95→
+    96→  const doRefresh = async () => {
+    97→    setRefreshing(true)
+    98→    try {
+    99→      await api.refreshRates()
+   100→      await Promise.all([refreshOverview(), loadExchanges()])
+   101→      toast({ title: 'Tasas actualizadas ✓', description: 'BCV (dolarapi) y USDT (Binance P2P)' })
+   102→    } catch (e) {
+   103→      toast({ title: 'Error', description: (e as Error).message, variant: 'destructive' })
+   104→    } finally {
+   105→      setRefreshing(false)
+   106→    }
+   107→  }
+   108→
+   109→  const toggleSeries = (k: string) =>
+   110→    setVisible((v) => (v.includes(k) ? v.filter((x) => x !== k) : [...v, k]))
+   111→
+   112→  return (
+   113→    <div className="pb-4">
+   114→      <ViewHeader
+   115→        title="Tasas y cambios"
+   116→        subtitle="Motor multimoneda: BCV, paralelo, USDT P2P y euro BCV · actualización diaria"
+   117→      />
+   118→
+   119→      {/* tarjetas de tasas */}
+   120→      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-5">
+   121→        {(
+   122→          [
+   123→            { key: 'bcv', label: 'BCV Oficial', color: SOURCE_COLORS.BCV },
+   124→            { key: 'paralelo', label: 'Paralelo', color: SOURCE_COLORS.PARALELO },
+   125→            { key: 'usdt', label: 'USDT P2P', color: SOURCE_COLORS.USDT_P2P },
+   126→            { key: 'eurBcv', label: 'Euro BCV', color: SOURCE_COLORS.EUR },
+   127→          ] as const
+   128→        ).map((s) => (
+   129→          <div key={s.key} className="glass rounded-2xl p-4">
+   130→            <div className="flex items-center justify-between mb-1">
+   131→              <span className="text-[11px] font-semibold uppercase tracking-wider" style={{ color: s.color }}>
+   132→                {s.label}
+   133→              </span>
+   134→            </div>
+   135→            <p className="tnum text-xl md:text-2xl font-bold">{formatRate(snapValue(rates, s.key))}</p>
+   136→            <div className="flex items-center gap-1.5 mt-2 flex-wrap">
+   137→              {variation(s.key) != null && <DeltaBadge value={variation(s.key)!} />}
+   138→              {monthVar(s.key) != null && (
+   139→                <span className="text-[10px] text-muted-foreground">7d: {monthVar(s.key)!.toFixed(1)}%</span>
+   140→              )}
+   141→            </div>
+   142→          </div>
+   143→        ))}
+   144→      </div>
+   145→
+   146→      <div className="flex gap-2 mb-4">
+   147→        <Button
+   148→          variant="outline"
+   149→          className="border-white/10 bg-secondary/40 flex-1"
+   150→          onClick={doRefresh}
+   151→          disabled={refreshing}
+   152→        >
+   153→          <RefreshCw size={14} className={cn('mr-1.5', refreshing && 'animate-spin')} /> Actualizar tasas
+   154→        </Button>
+   155→        <Button variant="outline" className="border-white/10 bg-secondary/40" onClick={() => setManualOpen(true)}>
+   156→          <Pencil size={14} className="mr-1.5" /> Manual
+   157→        </Button>
+   158→      </div>
+   159→
+   160→      {/* gráfico */}
+   161→      <section className="glass rounded-2xl p-5 mb-6">
+   162→        <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
+   163→          <h3 className="font-semibold text-sm">Historial 30 días</h3>
+   164→          <div className="flex gap-1.5 flex-wrap">
+   165→            {(
+   166→              [
+   167→                { id: 'bcv', label: 'BCV', color: SOURCE_COLORS.BCV },
+   168→                { id: 'paralelo', label: 'Paralelo', color: SOURCE_COLORS.PARALELO },
+   169→                { id: 'usdt', label: 'USDT', color: SOURCE_COLORS.USDT_P2P },
+   170→                { id: 'eurBcv', label: '€ BCV', color: SOURCE_COLORS.EUR },
+   171→              ] as const
+   172→            ).map((s) => (
+   173→              <button
+   174→                key={s.id}
+   175→                onClick={() => toggleSeries(s.id)}
+   176→                className={cn(
+   177→                  'rounded-full px-2.5 py-1 text-[11px] font-semibold border transition-all',
+   178→                  visible.includes(s.id) ? '' : 'opacity-35'
+   179→                )}
+   180→                style={{ borderColor: `${s.color}55`, color: s.color }}
+   181→              >
+   182→                {s.label}
+   183→              </button>
+   184→            ))}
+   185→          </div>
+   186→        </div>
+   187→        {chartData.length === 0 ? (
+   188→          <Skeleton className="h-56 rounded-xl" />
+   189→        ) : (
+   190→          <div className="h-56">
+   191→            <ResponsiveContainer width="100%" height="100%">
+   192→              <LineChart data={chartData} margin={{ top: 5, right: 6, left: 0, bottom: 0 }}>
+   193→                <XAxis dataKey="day" tick={{ fill: '#8b8fa3', fontSize: 10 }} axisLine={false} tickLine={false} interval={4} />
+   194→                <YAxis
+   195→                  domain={['dataMin - 15', 'dataMax + 15']}
+   196→                  tick={{ fill: '#8b8fa3', fontSize: 10 }}
+   197→                  axisLine={false}
+   198→                  tickLine={false}
+   199→                  width={44}
+   200→                  tickFormatter={(v) => `${Math.round(v)}`}
+   201→                />
+   202→                <Tooltip
+   203→                  content={({ active, payload, label }) =>
+   204→                    active && payload?.length ? (
+   205→                      <div className="glass rounded-xl px-3 py-2 text-xs shadow-xl">
+   206→                        <p className="font-semibold mb-1">{label}</p>
+   207→                        {payload.map((p) => (
+   208→                          <p key={p.name} className="tnum flex items-center gap-1.5">
+   209→                            <span className="w-2 h-2 rounded-full" style={{ backgroundColor: p.color }} />
+   210→                            {p.name === 'bcv' ? 'BCV' : p.name === 'paralelo' ? 'Paralelo' : p.name === 'usdt' ? 'USDT' : 'Euro BCV'}: Bs{' '}
+   211→                            {Number(p.value).toFixed(2)}
+   212→                          </p>
+   213→                        ))}
+   214→                      </div>
+   215→                    ) : null
+   216→                  }
+   217→                />
+   218→                <Legend
+   219→                  formatter={(v) => (
+   220→                    <span className="text-[11px] text-muted-foreground">
+   221→                      {v === 'bcv' ? 'BCV' : v === 'paralelo' ? 'Paralelo' : v === 'usdt' ? 'USDT P2P' : 'Euro BCV'}
+   222→                    </span>
+   223→                  )}
+   224→                />
+   225→                {visible.includes('bcv') && <Line type="monotone" dataKey="bcv" stroke={SOURCE_COLORS.BCV} strokeWidth={2} dot={false} />}
+   226→                {visible.includes('paralelo') && <Line type="monotone" dataKey="paralelo" stroke={SOURCE_COLORS.PARALELO} strokeWidth={2} dot={false} />}
+   227→                {visible.includes('usdt') && <Line type="monotone" dataKey="usdt" stroke={SOURCE_COLORS.USDT_P2P} strokeWidth={2} dot={false} strokeDasharray="4 3" />}
+   228→                {visible.includes('eurBcv') && <Line type="monotone" dataKey="eurBcv" stroke={SOURCE_COLORS.EUR} strokeWidth={2} dot={false} strokeDasharray="2 3" />}
+   229→              </LineChart>
+   230→            </ResponsiveContainer>
+   231→          </div>
+   232→        )}
+   233→      </section>
+   234→
+   235→      {/* cambios de divisa */}
+   236→      <section>
+   237→        <div className="flex items-center justify-between mb-3">
+   238→          <div>
+   239→            <h3 className="font-semibold text-sm">Cambios de divisa</h3>
+   240→            <p className="text-[11px] text-muted-foreground">
+   241→              Auditoría de diferenciales: qué tan bien cambiaste vs el mercado
+   242→            </p>
+   243→          </div>
+   244→          <Button
+   245→            size="sm"
+   246→            className="bg-violet-400 text-violet-950 hover:bg-violet-300 font-semibold h-8"
+   247→            onClick={() => setExchangeOpen(true)}
+   248→          >
+   249→            <ArrowLeftRight size={14} className="mr-1" /> Cambiar
+   250→          </Button>
+   251→        </div>
+   252→
+   253→        {exchanges && (exchanges.gainedUsd > 0.005 || exchanges.lostUsd > 0.005) && (
+   254→          <div className="grid grid-cols-3 gap-3 mb-3">
+   255→            <div className="glass rounded-xl p-3 text-center">
+   256→              <p className="text-[10px] uppercase tracking-wider text-emerald-400 font-semibold">Ganado</p>
+   257→              <p className="tnum font-bold text-emerald-400">${exchanges.gainedUsd.toFixed(2)}</p>
+   258→            </div>
+   259→            <div className="glass rounded-xl p-3 text-center">
+   260→              <p className="text-[10px] uppercase tracking-wider text-rose-400 font-semibold">Perdido</p>
+   261→              <p className="tnum font-bold text-rose-400">${exchanges.lostUsd.toFixed(2)}</p>
+   262→            </div>
+   263→            <div className="glass rounded-xl p-3 text-center">
+   264→              <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">Neto</p>
+   265→              <p className={cn('tnum font-bold', exchanges.netUsd >= 0 ? 'text-emerald-400' : 'text-rose-400')}>
+   266→                ${exchanges.netUsd.toFixed(2)}
+   267→              </p>
+   268→            </div>
+   269→          </div>
+   270→        )}
+   271→
+   272→        {!exchanges ? (
+   273→          <div className="space-y-2">
+   274→            <Skeleton className="h-24 rounded-2xl" />
+   275→            <Skeleton className="h-24 rounded-2xl" />
+   276→          </div>
+   277→        ) : exchanges.items.length === 0 ? (
+   278→          <EmptyState
+   279→            icon={<ArrowLeftRight size={24} />}
+   280→            title="Sin cambios registrados"
+   281→            hint="Cuando cambies Bs por divisas (o viceversa), registralo aquí para auditar si ganaste o perdiste vs la tasa del mercado."
+   282→          />
+   283→        ) : (
+   284→          <div className="space-y-2.5">
+   285→            {exchanges.items.map((e) => {
+   286→              const gain = e.differential >= 0
+   287→              const bsInvolved = e.fromCurrency === 'VES' || e.toCurrency === 'VES'
+   288→              return (
+   289→                <div key={e.id} className="glass rounded-2xl p-4">
+   290→                  <div className="flex items-center justify-between gap-2 flex-wrap">
+   291→                    <div className="flex items-center gap-2.5">
+   292→                      <span
+   293→                        className={cn(
+   294→                          'w-9 h-9 rounded-xl flex items-center justify-center',
+   295→                          gain ? 'bg-emerald-400/10 text-emerald-400' : 'bg-rose-400/10 text-rose-400'
+   296→                        )}
+   297→                      >
+   298→                        {gain ? <TrendingUp size={17} /> : <TrendingDown size={17} />}
+   299→                      </span>
+   300→                      <div>
+   301→                        <p className="text-sm font-semibold">
+   302→                          {formatMoney(e.fromAmount, e.fromCurrency as never)} →{' '}
+   303→                          {formatMoney(e.toAmount, e.toCurrency as never)}
+   304→                        </p>
+   305→                        <p className="text-[11px] text-muted-foreground">
+   306→                          {e.fromAccountName} → {e.toAccountName} · {shortDate(e.date)}
+   307→                          {e.note ? ` · ${e.note}` : ''}
+   308→                        </p>
+   309→                      </div>
+   310→                    </div>
+   311→                    <div className="text-right">
+   312→                      <p className={cn('tnum text-sm font-bold', gain ? 'text-emerald-400' : 'text-rose-400')}>
+   313→                        {gain ? '+' : '−'}
+   314→                        {bsInvolved
+   315→                          ? formatMoney(Math.abs(e.differential), 'VES')
+   316→                          : `${Math.abs(e.differential).toFixed(2)} ${e.toCurrency}`}
+   317→                      </p>
+   318→                      <p className="text-[10px] text-muted-foreground">
+   319→                        {gain ? 'a favor' : 'en contra'} vs {e.marketSource === 'PARALELO' ? 'paralelo' : e.marketSource === 'BCV' ? 'BCV' : 'USDT'}
+   320→                      </p>
+   321→                    </div>
+   322→                  </div>
+   323→                  <div className="flex items-center gap-3 mt-2.5 pt-2.5 border-t border-white/5 text-[11px] text-muted-foreground tnum flex-wrap">
+   324→                    <span>
+   325→                      Tu tasa: <span className="text-foreground/85">{bsInvolved ? formatRate(e.impliedRate) : e.impliedRate.toFixed(3)}</span>
+   326→                    </span>
+   327→                    <span>
+   328→                      Mercado: <span className="text-foreground/85">{bsInvolved ? formatRate(e.marketRate) : e.marketRate.toFixed(3)}</span>
+   329→                    </span>
+   330→                    <span className="ml-auto">≈ ${Math.abs(e.differentialUsd).toFixed(2)}</span>
+   331→                  </div>
+   332→                </div>
+   333→              )
+   334→            })}
+   335→          </div>
+   336→        )}
+   337→      </section>
+   338→
+   339→      <ExchangeDialog
+   340→        open={exchangeOpen}
+   341→        onClose={() => setExchangeOpen(false)}
+   342→        onSaved={async () => {
+   343→          await loadExchanges()
+   344→          await refreshOverview()
+   345→        }}
+   346→      />
+   347→      <ManualRateDialog open={manualOpen} onClose={() => setManualOpen(false)} />
+   348→    </div>
+   349→  )
+   350→}
+   351→
+   352→function ExchangeDialog({ open, onClose, onSaved }: { open: boolean; onClose: () => void; onSaved: () => Promise<void> }) {
+   353→  const { overview } = useAppStore()
+   354→  const { toast } = useToast()
+   355→  const accounts = overview?.accounts ?? []
+   356→  const [fromAccountId, setFromAccountId] = useState('')
+   357→  const [toAccountId, setToAccountId] = useState('')
+   358→  const [fromAmount, setFromAmount] = useState('')
+   359→  const [toAmount, setToAmount] = useState('')
+   360→  const [note, setNote] = useState('')
+   361→  const [marketSource, setMarketSource] = useState('PARALELO')
+   362→  const [saving, setSaving] = useState(false)
+   363→
+   364→  const from = accounts.find((a) => a.id === fromAccountId)
+   365→  const to = accounts.find((a) => a.id === toAccountId)
+   366→  const rates = overview?.rates
+   367→
+   368→  const implied = useMemo(() => {
+   369→    const fa = parseAmount(fromAmount)
+   370→    const ta = parseAmount(toAmount)
+   371→    if (!from || !to || !Number.isFinite(fa) || !Number.isFinite(ta) || fa <= 0 || ta <= 0) return null
+   372→    if (from.currency === 'VES' && to.currency !== 'VES') return fa / ta
+   373→    if (from.currency !== 'VES' && to.currency === 'VES') return ta / fa
+   374→    return ta / fa
+   375→  }, [from, to, fromAmount, toAmount])
+   376→
+   377→  const marketRate = useMemo(() => {
+   378→    if (!rates || !from || !to) return null
+   379→    const usd = marketSource === 'BCV' ? rates.bcv : marketSource === 'USDT_P2P' ? rates.usdt : rates.paralelo
+   380→    if (!usd) return null
+   381→    const rateFor = (c: string) =>
+   382→      c === 'USD' ? usd : c === 'USDT' ? (rates.usdt ?? usd) : c === 'EUR' ? usd * rates.eurUsd : 1
+   383→    if (from.currency === 'VES' && to.currency !== 'VES') return rateFor(to.currency)
+   384→    if (from.currency !== 'VES' && to.currency === 'VES') return rateFor(from.currency)
+   385→    const rf = rateFor(from.currency)
+   386→    const rt = rateFor(to.currency)
+   387→    return rf && rt ? rf / rt : null
+   388→  }, [rates, from, to, marketSource])
+   389→
+   390→  const diff = useMemo(() => {
+   391→    if (implied == null || marketRate == null || !fromAmount) return null
+   392→    const fa = parseAmount(fromAmount)
+   393→    return (implied - marketRate) * (from?.currency === 'VES' ? parseAmount(toAmount) : fa)
+   394→  }, [implied, marketRate, fromAmount, toAmount, from])
+   395→
+   396→  const valid =
+   397→    fromAccountId && toAccountId && fromAccountId !== toAccountId && from && to && from.currency !== to.currency &&
+   398→    parseAmount(fromAmount) > 0 && parseAmount(toAmount) > 0
+   399→
+   400→  const submit = async () => {
+   401→    if (!valid || saving) return
+   402→    setSaving(true)
+   403→    try {
+   404→      await api.createExchange({
+   405→        fromAccountId,
+   406→        toAccountId,
+   407→        fromAmount: parseAmount(fromAmount),
+   408→        toAmount: parseAmount(toAmount),
+   409→        marketSource,
+   410→        note: note.trim() || null,
+   411→      })
+   412→      toast({ title: 'Cambio registrado ✓', description: 'Los saldos de ambas cuentas se actualizaron' })
+   413→      onClose()
+   414→      setFromAmount('')
+   415→      setToAmount('')
+   416→      setNote('')
+   417→      await onSaved()
+   418→    } catch (e) {
+   419→      toast({ title: 'Error', description: (e as Error).message, variant: 'destructive' })
+   420→    } finally {
+   421→      setSaving(false)
+   422→    }
+   423→  }
+   424→
+   425→  return (
+   426→    <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
+   427→      <DialogContent className="glass border-white/10 sm:max-w-md max-h-[92dvh] overflow-y-auto">
+   428→        <DialogHeader>
+   429→          <DialogTitle>Cambio de divisa</DialogTitle>
+   430→        </DialogHeader>
+   431→        <div className="space-y-4">
+   432→          <div className="grid grid-cols-2 gap-3">
+   433→            <div>
+   434→              <Label>Entregas desde</Label>
+   435→              <Select value={fromAccountId} onValueChange={setFromAccountId}>
+   436→                <SelectTrigger className="bg-secondary/40 border-white/10">
+   437→                  <SelectValue placeholder="Cuenta origen" />
+   438→                </SelectTrigger>
+   439→                <SelectContent>
+   440→                  {accounts.map((a) => (
+   441→                    <SelectItem key={a.id} value={a.id}>
+   442→                      {a.name} ({a.currency})
+   443→                    </SelectItem>
+   444→                  ))}
+   445→                </SelectContent>
+   446→              </Select>
+   447→            </div>
+   448→            <div>
+   449→              <Label>Recibes en</Label>
+   450→              <Select value={toAccountId} onValueChange={setToAccountId}>
+   451→                <SelectTrigger className="bg-secondary/40 border-white/10">
+   452→                  <SelectValue placeholder="Cuenta destino" />
+   453→                </SelectTrigger>
+   454→                <SelectContent>
+   455→                  {accounts
+   456→                    .filter((a) => a.id !== fromAccountId)
+   457→                    .map((a) => (
+   458→                      <SelectItem key={a.id} value={a.id}>
+   459→                        {a.name} ({a.currency})
+   460→                      </SelectItem>
+   461→                    ))}
+   462→                </SelectContent>
+   463→              </Select>
+   464→            </div>
+   465→          </div>
+   466→
+   467→          {from && to && from.currency === to.currency && (
+   468→            <p className="text-xs text-amber-400">
+   469→              Las dos cuentas usan la misma moneda: eso es una Transferencia, no un cambio.
+   470→            </p>
+   471→          )}
+   472→
+   473→          <div className="grid grid-cols-2 gap-3">
+   474→            <div>
+   475→              <Label>Monto que entregas {from ? `(${from.currency})` : ''}</Label>
+   476→              <Input inputMode="decimal" placeholder="0,00" value={fromAmount} onChange={(e) => setFromAmount(e.target.value)} className="bg-secondary/40 border-white/10 tnum h-11 text-lg font-bold" />
+   477→            </div>
+   478→            <div>
+   479→              <Label>Monto que recibes {to ? `(${to.currency})` : ''}</Label>
+   480→              <Input inputMode="decimal" placeholder="0,00" value={toAmount} onChange={(e) => setToAmount(e.target.value)} className="bg-secondary/40 border-white/10 tnum h-11 text-lg font-bold" />
+   481→            </div>
+   482→          </div>
+   483→
+   484→          <div className="grid grid-cols-2 gap-3">
+   485→            <div>
+   486→              <Label>Comparar contra</Label>
+   487→              <Select value={marketSource} onValueChange={setMarketSource}>
+   488→                <SelectTrigger className="bg-secondary/40 border-white/10">
+   489→                  <SelectValue />
+   490→                </SelectTrigger>
+   491→                <SelectContent>
+   492→                  <SelectItem value="PARALELO">Paralelo</SelectItem>
+   493→                  <SelectItem value="BCV">BCV</SelectItem>
+   494→                  <SelectItem value="USDT_P2P">USDT P2P</SelectItem>
+   495→                </SelectContent>
+   496→              </Select>
+   497→            </div>
+   498→            <div>
+   499→              <Label>Nota (opcional)</Label>
+   500→              <Input placeholder="Ej: venta P2P" value={note} onChange={(e) => setNote(e.target.value)} className="bg-secondary/40 border-white/10" />
+   501→            </div>
+   502→          </div>
+   503→
+   504→          {implied != null && marketRate != null && (
+   505→            <div className="glass rounded-xl p-3.5 space-y-1.5 text-xs">
+   506→              <div className="flex justify-between">
+   507→                <span className="text-muted-foreground">Tu tasa implícita</span>
+   508→                <span className="tnum font-semibold">{from?.currency === 'VES' || to?.currency === 'VES' ? formatRate(implied) : implied.toFixed(3)}</span>
+   509→              </div>
+   510→              <div className="flex justify-between">
+   511→                <span className="text-muted-foreground">Tasa de mercado ({marketSource === 'PARALELO' ? 'paralelo' : marketSource === 'BCV' ? 'BCV' : 'USDT'})</span>
+   512→                <span className="tnum font-semibold">{from?.currency === 'VES' || to?.currency === 'VES' ? formatRate(marketRate) : marketRate.toFixed(3)}</span>
+   513→              </div>
+   514→              {diff != null && (
+   515→                <div className="flex justify-between pt-1.5 border-t border-white/5">
+   516→                  <span className="text-muted-foreground">Diferencial</span>
+   517→                  <span className={cn('tnum font-bold', diff >= 0 ? 'text-emerald-400' : 'text-rose-400')}>
+   518→                    {diff >= 0 ? '▲ ganas ' : '▼ pierdes '}
+   519→                    {from?.currency === 'VES' || to?.currency === 'VES' ? formatMoney(Math.abs(diff), 'VES') : Math.abs(diff).toFixed(2)}
+   520→                  </span>
+   521→                </div>
+   522→              )}
+   523→            </div>
+   524→          )}
+   525→        </div>
+   526→        <DialogFooter>
+   527→          <Button variant="ghost" onClick={onClose}>
+   528→            Cancelar
+   529→          </Button>
+   530→          <Button onClick={submit} disabled={!valid || saving} className="font-semibold bg-violet-400 text-violet-950 hover:bg-violet-300">
+   531→            {saving ? 'Registrando…' : 'Registrar cambio'}
+   532→          </Button>
+   533→        </DialogFooter>
+   534→      </DialogContent>
+   535→    </Dialog>
+   536→  )
+   537→}
+   538→
+   539→function ManualRateDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
+   540→  const { refreshOverview } = useAppStore()
+   541→  const { toast } = useToast()
+   542→  const [source, setSource] = useState('PARALELO')
+   543→  const [usd, setUsd] = useState('')
+   544→  const [eur, setEur] = useState('')
+   545→  const [saving, setSaving] = useState(false)
+   546→
+   547→  const submit = async () => {
+   548→    const v = parseAmount(usd)
+   549→    const ev = parseAmount(eur)
+   550→    if (!Number.isFinite(v) || v <= 0 || saving) return
+   551→    setSaving(true)
+   552→    try {
+   553→      await api.setRate(source, v, Number.isFinite(ev) && ev > 0 ? ev : undefined)
+   554→      toast({ title: 'Tasa fijada manualmente ✓' })
+   555→      onClose()
+   556→      setUsd('')
+   557→      setEur('')
+   558→      await refreshOverview()
+   559→    } catch (e) {
+   560→      toast({ title: 'Error', description: (e as Error).message, variant: 'destructive' })
+   561→    } finally {
+   562→      setSaving(false)
+   563→    }
+   564→  }
+   565→
+   566→  return (
+   567→    <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
+   568→      <DialogContent className="glass border-white/10 sm:max-w-sm">
+   569→        <DialogHeader>
+   570→          <DialogTitle>Fijar tasa manual</DialogTitle>
+   571→        </DialogHeader>
+   572→        <div className="space-y-4">
+   573→          <div>
+   574→            <Label>Fuente</Label>
+   575→            <Select value={source} onValueChange={setSource}>
+   576→              <SelectTrigger className="bg-secondary/40 border-white/10">
+   577→                <SelectValue />
+   578→              </SelectTrigger>
+   579→              <SelectContent>
+   580→                <SelectItem value="BCV">BCV Oficial</SelectItem>
+   581→                <SelectItem value="PARALELO">Paralelo</SelectItem>
+   582→                <SelectItem value="USDT_P2P">USDT P2P</SelectItem>
+   583→              </SelectContent>
+   584→            </Select>
+   585→          </div>
+   586→          <div>
+   587→            <Label>Bs por 1 USD</Label>
+   588→            <Input inputMode="decimal" placeholder="0,00" value={usd} onChange={(e) => setUsd(e.target.value)} className="bg-secondary/40 border-white/10 tnum h-12 text-xl font-bold" />
+   589→          </div>
+   590→          <div>
+   591→            <Label>Bs por 1 EUR (opcional)</Label>
+   592→            <Input inputMode="decimal" placeholder="se deriva del cruce €/$ si lo dejas vacío" value={eur} onChange={(e) => setEur(e.target.value)} className="bg-secondary/40 border-white/10 tnum h-11" />
+   593→          </div>
+   594→          <p className="text-[11px] text-muted-foreground">
+   595→            Útil si quieres valorar tu patrimonio con una tasa pactada específica.
+   596→          </p>
+   597→        </div>
+   598→        <DialogFooter>
+   599→          <Button variant="ghost" onClick={onClose}>
+   600→            Cancelar
+   601→          </Button>
+   602→          <Button onClick={submit} disabled={saving} className="font-semibold">
+   603→            {saving ? 'Guardando…' : 'Fijar tasa'}
+   604→          </Button>
+   605→        </DialogFooter>
+   606→      </DialogContent>
+   607→    </Dialog>
+   608→  )
+   609→}
+   610→
