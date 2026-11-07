@@ -7,6 +7,7 @@ import { useEffect, useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import { useAppStore } from './store'
 import { TransactionDialog } from './transaction-dialog'
+import { PinGate } from './pin-gate'
 import { cn } from '@/lib/utils'
 import { formatRate } from '@/lib/finance'
 import {
@@ -105,6 +106,7 @@ export function BolsilloApp() {
         <BottomNav />
       </div>
       <TransactionDialog />
+      <PinGate />
     </div>
   )
 }

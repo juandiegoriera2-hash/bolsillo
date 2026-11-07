@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server'
 import { visionText, extractJson, aiErrorMessage } from '@/lib/ai'
 import { parseAmount } from '@/lib/finance'
 
-export const maxDuration = 90
+export const maxDuration = 60
 
 export type OcrResult = {
   banco: string | null

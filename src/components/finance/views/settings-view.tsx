@@ -368,7 +368,7 @@ export function SettingsView() {
         <div className="mt-4 grid grid-cols-2 gap-2 text-[11px] text-muted-foreground">
           <p>💱 Tasas: dolarapi (BCV/paralelo) + Binance P2P</p>
           <p>🤖 IA: chat, voz y OCR de comprobantes</p>
-          <p>🔒 Datos 100% locales</p>
+          <p>🔒 Candado PIN al publicar</p>
           <p>📱 PWA instalable</p>
         </div>
       </section>

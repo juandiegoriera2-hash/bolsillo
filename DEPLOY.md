@@ -57,13 +57,18 @@ Tendrás dos valores: **URL** y **Token**. Los necesitarás en el paso 3.
 1. Entra a **vercel.com** y regístrate **con GitHub** (Continue with GitHub).
 2. **Add New… → Project** → elige tu repo `bolsillo` → **Import**.
    (Deja todo como viene: detecta Next.js solo.)
-3. Antes de desplegar, abre **Environment Variables** y agrega estas 3:
+3. Antes de desplegar, abre **Environment Variables** y agrega estas 4:
 
    | Name | Value |
    |---|---|
    | `TURSO_DATABASE_URL` | la URL de Turso (`libsql://…`) |
    | `TURSO_AUTH_TOKEN` | el token de Turso (`eyJ…`) |
    | `DATABASE_URL` | la misma URL de Turso (`libsql://…`) |
+   | `APP_PIN` | **elige tu PIN** (ej. `4321`) — candado de acceso 🔒 |
+
+   > El PIN es importante: la URL es pública y ahí viven tus finanzas.
+   > Al abrir la app pedirá el PIN una sola vez (queda recordado 90 días
+   > en tu teléfono). Si omites la variable, la app queda sin candado.
 
 4. Toca **Deploy** y espera ~2 minutos. 🎉
 5. Te dará una URL tipo `https://bolsillo-xxxx.vercel.app`:
@@ -80,29 +85,31 @@ Tendrás dos valores: **URL** y **Token**. Los necesitarás en el paso 3.
 
 ---
 
-## 🤖 IA opcional (gratis con OpenRouter)
+## 🤖 IA opcional (gratis con Groq — incluye la VOZ)
 
-El asistente, el escáner de comprobantes y el resumen semanal usan IA.
-En el despliegue puedes activarlos **gratis** con [OpenRouter](https://openrouter.ai)
-(tiene modelos sin costo):
+El asistente, el escáner de comprobantes, el resumen semanal y la
+**entrada por voz** usan IA. En el despliegue puedes activarlos **gratis**
+con [Groq](https://groq.com) (registro rápido, sin tarjeta):
 
-1. Crea una cuenta → **Keys** → **Create key** → copia la clave (`sk-or-…`).
+1. Crea una cuenta en **console.groq.com** → **API Keys** → **Create API
+   Key** → copia la clave (`gsk_…`).
 2. En Vercel: **Settings → Environment Variables** de tu proyecto, agrega:
 
    | Name | Value |
    |---|---|
-   | `AI_BASE_URL` | `https://openrouter.ai/api/v1` |
-   | `AI_API_KEY` | tu clave `sk-or-…` |
-   | `AI_MODEL` | un modelo de texto (ej. `meta-llama/llama-3.3-70b-instruct:free`) |
-   | `AI_VISION_MODEL` | un modelo con visión para el OCR (ej. `qwen/qwen2.5-vl-72b-instruct:free`) |
+   | `AI_BASE_URL` | `https://api.groq.com/openai/v1` |
+   | `AI_API_KEY` | tu clave `gsk_…` |
+   | `AI_MODEL` | `llama-3.3-70b-versatile` |
+   | `AI_VISION_MODEL` | `meta-llama/llama-4-scout-17b-16e-instruct` |
+   | `AI_ASR_MODEL` | `whisper-large-v3` |
 
 3. **Deployments → … → Redeploy** para que aplique.
 
-La lista de modelos gratis cambia con el tiempo: mira openrouter.ai/models
-(filtro “free”). Sin estas variables la app funciona normal; solo la IA
-muestra un aviso de que no está activa. La entrada por **voz** solo está
-disponible en el entorno de desarrollo (no hay servicio de transcripción
-universal gratuito).
+Los nombres de modelos cambian con el tiempo: si alguno falla, revisa la
+lista en console.groq.com/settings/models y ajusta la variable.
+Alternativa solo texto/OCR: OpenRouter (`https://openrouter.ai/api/v1`,
+modelos con sufijo `:free`; sin voz). Sin estas variables la app funciona
+normal; solo la IA muestra un aviso de que no está activa.
 
 ## 🔄 Actualizar la app más adelante
 
@@ -122,14 +129,19 @@ Cuando te dé una versión nueva del código (ZIP actualizado):
 
 ## ❓ Preguntas frecuentes
 
-- **“Error” en la primera carga** → revisa que las 3 variables en Vercel
+- **“Error” en la primera carga** → revisa que las variables en Vercel
   coincidan exactamente con la URL y token de Turso (sin espacios), y haz
   Redeploy.
+- **El build falla en Vercel** → lo más raro que puede pasar es un
+  problema de instalación con Bun. Borra el archivo `bun.lock` del repo
+  (GitHub → clic en él → papelera → commit) y haz Redeploy: instalará
+  con npm.
 - **¿Mis datos actuales se pasan?** No. Empiezas con los datos de ejemplo;
   bórralos y registra lo tuyo. La app de este entorno de desarrollo sigue
   disponible tal cual.
-- **¿Es segura mi URL?** Es difícil de adivinar (nombre aleatorio) y el
-  repo puede ser privado. Si quieres PIN de acceso, pídemelo y lo agrego.
+- **¿Es segura mi URL?** Lleva candado con **APP_PIN** (defínelo al
+  publicar) y el repo puede ser privado. El PIN se pide una vez por
+  dispositivo y queda recordado 90 días.
 - **¿Funciona sin internet?** Como cualquier app de finanzas en la nube,
   necesita conexión; sin ella verás un aviso amarillo y se sincroniza al
   reconectar.

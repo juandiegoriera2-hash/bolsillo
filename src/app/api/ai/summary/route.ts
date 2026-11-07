@@ -12,7 +12,7 @@ import {
   getSettings,
 } from '@/lib/queries'
 
-export const maxDuration = 90
+export const maxDuration = 60
 
 /** Lunes de la semana actual (UTC-4 Caracas) */
 function mondayOfThisWeek(): Date {

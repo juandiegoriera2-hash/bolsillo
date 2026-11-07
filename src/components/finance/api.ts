@@ -36,6 +36,10 @@ async function req<T>(url: string, init?: RequestInit): Promise<T> {
     json = null
   }
   if (!res.ok) {
+    // candado PIN (producción): la API responde 401 hasta desbloquear
+    if (res.status === 401 && typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('bolsillo:locked'))
+    }
     const msg =
       (json as { error?: string } | null)?.error ?? `Error ${res.status} en ${url.split('?')[0]}`
     throw new Error(msg)

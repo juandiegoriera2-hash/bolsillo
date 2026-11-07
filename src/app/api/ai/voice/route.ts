@@ -3,7 +3,7 @@ import { ensureSeed } from '@/lib/seed'
 import { transcribeAudio, aiErrorMessage } from '@/lib/ai'
 import { handleChatMessage } from '@/lib/assistant'
 
-export const maxDuration = 90
+export const maxDuration = 60
 
 /** Voz → texto (ASR) → pipeline del asistente */
 export async function POST(req: Request) {

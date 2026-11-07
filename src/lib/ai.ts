@@ -150,7 +150,9 @@ export async function visionText(prompt: string, imageDataUrl: string): Promise<
   throw new Error(NO_AI_MSG)
 }
 
-/** Transcripción de voz (ASR) desde base64 — solo z-ai (sin equivalente universal gratis) */
+/** Transcripción de voz (ASR) desde base64.
+ *  1) z-ai (entorno de desarrollo) · 2) API compatible OpenAI con
+ *  endpoint /audio/transcriptions (ej. Groq gratis: whisper-large-v3) */
 export async function transcribeAudio(fileBase64: string): Promise<string> {
   for (let attempt = 0; attempt < 2; attempt++) {
     try {
@@ -161,15 +163,39 @@ export async function transcribeAudio(fileBase64: string): Promise<string> {
       const msg = e instanceof Error ? e.message : String(e)
       console.error('[ai] zai asr falló:', msg)
       // sin archivo de config → IA no disponible en este despliegue (503)
-      if (/configuration file not found/i.test(msg)) throw new Error(NO_AI_MSG)
+      if (/configuration file not found/i.test(msg)) break
       if (attempt === 0 && isAuthError(e)) {
         resetZai() // token caducado → releer config y reintentar
         continue
       }
-      // otros errores (audio muy corto, silencio, formato…) se reportan tal cual
-      // para que la ruta los distinga de “IA no disponible” (422)
+      // otros errores de zai (audio muy corto, silencio, formato…):
+      // se reportan tal cual para que la ruta los distinga (422)
       throw e instanceof Error ? e : new Error(String(e))
     }
+  }
+  // 2) OpenAI-compatible (producción): /audio/transcriptions (multipart)
+  const cfg = openAiConfig()
+  if (cfg) {
+    const asrModel = process.env.AI_ASR_MODEL || 'whisper-large-v3'
+    const form = new FormData()
+    form.append(
+      'file',
+      new Blob([Buffer.from(fileBase64, 'base64')], { type: 'audio/wav' }),
+      'audio.wav'
+    )
+    form.append('model', asrModel)
+    const res = await fetch(`${cfg.base}/audio/transcriptions`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${cfg.key}` },
+      body: form,
+    })
+    if (res.ok) {
+      const json = (await res.json()) as { text?: string }
+      const text = (json?.text ?? '').trim()
+      if (text) return text
+      throw new Error('La transcripción llegó vacía')
+    }
+    throw new Error(`IA: el proveedor de voz respondió ${res.status}. Revisa AI_ASR_MODEL / la clave.`)
   }
   throw new Error(NO_AI_MSG)
 }
