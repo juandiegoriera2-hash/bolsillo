@@ -7,7 +7,6 @@
 // build de Vercel nunca intente conectarse a la base de datos.
 // ─────────────────────────────────────────────────────────────────
 import { PrismaClient } from '@prisma/client'
-import { createClient } from '@libsql/client'
 import { PrismaLibSQL } from '@prisma/adapter-libsql'
 
 export function tursoConfig(): { url: string; token: string } | null {
@@ -24,8 +23,10 @@ export function tursoConfig(): { url: string; token: string } | null {
 function createDb(): PrismaClient {
   const t = tursoConfig()
   if (t) {
+    // PrismaLibSQL espera la CONFIGURACIÓN ({url, authToken}),
+    // no un cliente ya creado — él crea el cliente internamente.
     return new PrismaClient({
-      adapter: new PrismaLibSQL(createClient({ url: t.url, authToken: t.token })),
+      adapter: new PrismaLibSQL({ url: t.url, authToken: t.token }),
       log: ['error'],
     })
   }
