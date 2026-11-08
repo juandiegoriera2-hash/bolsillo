@@ -208,7 +208,33 @@ export async function transcribeAudio(fileBase64: string): Promise<string> {
       throw e instanceof Error ? e : new Error(String(e))
     }
   }
-  // 2) OpenAI-compatible (producción): /audio/transcriptions (multipart)
+  // 2) Proveedor de voz dedicado (VOICE_*): ej. Groq — whisper-large-v3
+  //    (OpenRouter no tiene ASR; VOICE_* permite separar proveedor de voz)
+  const voiceBase = process.env.VOICE_BASE_URL?.replace(/\/+$/, '')
+  const voiceKey = process.env.VOICE_API_KEY
+  if (voiceBase && voiceKey) {
+    const asrModel = process.env.VOICE_MODEL || process.env.AI_ASR_MODEL || 'whisper-large-v3'
+    const form = new FormData()
+    form.append(
+      'file',
+      new Blob([Buffer.from(fileBase64, 'base64')], { type: 'audio/wav' }),
+      'audio.wav'
+    )
+    form.append('model', asrModel)
+    const res = await fetch(`${voiceBase}/audio/transcriptions`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${voiceKey}` },
+      body: form,
+    })
+    if (res.ok) {
+      const json = (await res.json()) as { text?: string }
+      const text = (json?.text ?? '').trim()
+      if (text) return text
+      throw new Error('La transcripción llegó vacía')
+    }
+    throw new Error(`IA: el proveedor de voz respondió ${res.status}. Revisa VOICE_API_KEY en Vercel.`)
+  }
+  // 3) Fallback: proveedor general (AI_*) con /audio/transcriptions
   const cfg = openAiConfig()
   if (cfg) {
     const asrModel = process.env.AI_ASR_MODEL || 'whisper-large-v3'
