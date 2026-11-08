@@ -10,8 +10,16 @@ export async function POST(req: Request) {
     await ensureSeed()
     const body = await req.json()
     const message = String(body?.message ?? '').trim()
-    if (!message) return NextResponse.json({ error: 'Mensaje vacío' }, { status: 400 })
-    const result = await handleChatMessage(message)
+    // capturas de pantalla adjuntas (data URLs, máx 4)
+    const images: string[] = Array.isArray(body?.images)
+      ? body.images
+          .filter((i: unknown) => typeof i === 'string' && String(i).startsWith('data:image/'))
+          .slice(0, 4)
+      : []
+    if (!message && images.length === 0) {
+      return NextResponse.json({ error: 'Mensaje vacío' }, { status: 400 })
+    }
+    const result = await handleChatMessage(message, images)
     return NextResponse.json(result)
   } catch (e) {
     console.error('[ai/chat]', e)

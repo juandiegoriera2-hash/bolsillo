@@ -199,10 +199,10 @@ export const api = {
     req<ExchangeDTO>('/api/exchanges', { method: 'POST', body: JSON.stringify(data) }),
 
   // ── IA ──────────────────────────────────────────────────
-  chat: (message: string) =>
+  chat: (message: string, images?: string[]) =>
     req<{ reply: string; results: Array<{ ok: boolean; message: string }> }>('/api/ai/chat', {
       method: 'POST',
-      body: JSON.stringify({ message }),
+      body: JSON.stringify({ message, images: images?.length ? images : undefined }),
     }),
   voice: (audioBase64: string) =>
     req<{

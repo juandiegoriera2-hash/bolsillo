@@ -49,6 +49,7 @@ const TransactionAction = z.object({
     category: z.string().optional(),
     description: z.string().optional(),
     date: z.string().optional(),
+    time: z.string().optional(), // HH:MM 24h (capturas con hora)
     tags: z.array(z.string()).optional(),
   }),
 })
@@ -283,11 +284,34 @@ async function buildContext(): Promise<string> {
   return lines.join('\n')
 }
 
-function systemPrompt(context: string): string {
+function systemPrompt(context: string, imageCount = 0): string {
+  const screenshotRules =
+    imageCount > 0
+      ? `
+
+📸 CAPTURAS DE PANTALLA ADJUNTAS (${imageCount}):
+El usuario adjuntó capturas de su app bancaria o de otra app de finanzas. Pueden ser capturas de un SCROLL que se solapan (el mismo movimiento visible en dos capturas).
+
+Tu trabajo: leer TODOS los movimientos visibles y registrar CADA uno como una acción create_transaction separada, en orden cronológico (del más antiguo al más nuevo). El límite normal de acciones NO aplica: registra TODOS los que veas con claridad (pueden ser 20, 30 o más).
+
+REGLAS DE LECTURA:
+- Registra SOLO las filas de movimientos individuales. Los TOTALES no son movimientos ("Ingresos $259,91", "Egresos $139,51", "6 nov — -$7,30", "Noviembre"): solo te sirven para saber la fecha o verificar. NUNCA los registres.
+- Si un movimiento aparece en varias capturas (scroll solapado), regístralo UNA sola vez.
+- Signo = tipo: "-$5,79" o "-Bs 450" → EXPENSE. "+$259,91" → INCOME. Monto sin signo en una lista de movimientos: dedúcelo del contexto (fila bajo "Egresos" o con "-" → EXPENSE).
+- "date": "YYYY-MM-DD" desde el encabezado del grupo ("Ayer" = ayer, "6 nov" = 06-11 del año actual, "05/11/2025" tal cual). "Ayer" y fechas relativas están en el contexto.
+- "time": "HH:MM" en formato 24h si la fila muestra hora ("4:29 p. m." → "16:29", "8:55 a. m." → "08:55").
+- "currency": "$" → USD · "Bs" → VES · "₮"/"USDT" → USDT · "€" → EUR. Inclúyela SIEMPRE en importes de capturas.
+- "description": el concepto textual de la fila tal cual ("Nestea", "Estacionamiento", "perro caliente Paola", "Compra Mercantil").
+- "category": mapea el concepto a la categoría del contexto más parecida ("Comer fuera" para almuerzo/empanada/perro caliente, "Café y Bebidas" para refrescos/café, "Gasolina" para combustible). Si ninguna encaja, omite el campo.
+- Si la captura es un comprobante individual (una sola operación con referencia), usa el monto de la OPERACIÓN, nunca el saldo disponible.
+- Números venezolanos: "1.234,56" → 1234.56 · "50.000" → 50000.
+- En "reply": confirma en 2-3 frases cuántos movimientos registraste, el total de gastos e ingresos y el rango de fechas. Ej: "Listo ✅ Registré 18 movimientos del 1 al 7 de noviembre: $139,51 en gastos y $259,91 en ingresos". NO repitas la lista completa ni menciones JSON.`
+      : ''
   return `Eres "Bolsillo", el asistente financiero de una app personal para Venezuela. Hablas español venezolano, cálido, directo y breve (2-3 frases máximo). No expliquies tu formato interno.
 
 CONTEXTO REAL DEL USUARIO:
 ${context}
+${screenshotRules}
 
 Cuando el usuario registre un movimiento ("gasté 450 en almuerzo", "me pagaron 50 dólares", "recibí la quincena", "pasé 20$ de Zinli a efectivo"), debes crear la acción correspondiente. Responde SIEMPRE con un único JSON válido (sin texto extra, sin markdown):
 
@@ -356,31 +380,91 @@ function correctActionAmount(amount: number, userAmounts: number[]): number {
   return amount
 }
 
-/** Fecha válida YYYY-MM-DD o null (evita Invalid Date que rompe el insert) */
-function safeDate(date?: string): Date {
-  if (date && /^\d{4}-\d{2}-\d{2}$/.test(date)) {
-    const d = new Date(`${date}T12:00:00`)
+/** Fecha válida YYYY-MM-DD (con hora opcional HH:MM) o ahora
+ *  (evita Invalid Date que rompe el insert) */
+function safeDate(date?: string, time?: string): Date {
+  const day = date && /^\d{4}-\d{2}-\d{2}$/.test(date) ? date : null
+  const tm = time && /^([0-1]?\d|2[0-3]):[0-5]\d$/.exec(time.trim())
+  const hh = tm ? Number(tm[1]) : 12
+  const mm = tm ? Number(time.trim().split(':')[1]) : 0
+  if (day) {
+    const d = new Date(`${day}T${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}:00`)
     if (!Number.isNaN(d.getTime())) return d
   }
   return new Date()
 }
 
-async function executeActions(raw: unknown, userMessage = ''): Promise<ChatActionResult[]> {
-  const parsed = z.array(ActionSchema).safeParse(raw)
-  if (!parsed.success) {
-    console.warn('[assistant] acciones rechazadas por validación:', JSON.stringify(raw)?.slice(0, 300))
-    return []
+async function executeActions(
+  raw: unknown,
+  userMessage = '',
+  hasImages = false
+): Promise<ChatActionResult[]> {
+  // Validación POR ÍTEM: con capturas el LLM puede devolver decenas de
+  // movimientos y una fila ilegible (ej: monto $0) no debe tumbar todo el lote.
+  const rawItems = Array.isArray(raw) ? raw : []
+  const actions: Array<z.infer<typeof ActionSchema>> = []
+  for (const item of rawItems.slice(0, hasImages ? 60 : 4)) {
+    const parsed = ActionSchema.safeParse(item)
+    if (parsed.success) actions.push(parsed.data)
+    else
+      console.warn(
+        '[assistant] acción inválida omitida:',
+        JSON.stringify(item)?.slice(0, 200)
+      )
   }
+  if (actions.length === 0) return []
   const userAmounts = extractUserAmounts(userMessage)
-  const actions = parsed.data.slice(0, 4)
   const results: ChatActionResult[] = []
   const rates = await getRateSnapshot()
+
+  // ── Anti-duplicados para importes de capturas ─────────────────
+  // Las capturas de scroll se solapan (el mismo movimiento aparece
+  // dos veces) y el usuario puede pegar la misma captura otra vez.
+  // Comparamos contra lo ya registrado (últimos 90 días) y dentro del lote.
+  const recentTx = hasImages
+    ? await db.transaction.findMany({
+        where: { date: { gte: new Date(Date.now() - 90 * 86400000) } },
+        select: { date: true, amount: true, originalAmount: true, description: true },
+      })
+    : []
+  const seenBatch = new Set<string>()
+  const isDuplicate = (dateKey: string, amount: number, desc: string): boolean => {
+    const key = `${dateKey}|${amount.toFixed(2)}|${norm(desc)}`
+    if (seenBatch.has(key)) return true
+    const dup = recentTx.some((tx) => {
+      if (caracasDateKey(tx.date) !== dateKey) return false
+      const sameDesc =
+        !desc ||
+        !tx.description ||
+        norm(tx.description).includes(norm(desc)) ||
+        norm(desc).includes(norm(tx.description))
+      const sameAmount =
+        Math.abs((tx.amount ?? 0) - amount) < 0.011 ||
+        Math.abs((tx.originalAmount ?? NaN) - amount) < 0.011
+      return sameDesc && sameAmount
+    })
+    if (dup) return true
+    seenBatch.add(key)
+    return false
+  }
 
   for (const action of actions) {
     try {
       if (action.type === 'create_transaction') {
         const t = action.transaction
         let amount = correctActionAmount(t.amount, userAmounts)
+        // duplicado (scroll solapado o captura pegada dos veces) → omitir
+        if (hasImages) {
+          const dateKey = t.date && /^\d{4}-\d{2}-\d{2}$/.test(t.date) ? t.date : caracasDateKey()
+          if (isDuplicate(dateKey, amount, (t.description ?? '').trim())) {
+            results.push({
+              ok: true,
+              kind: 'transaction',
+              message: `"${(t.description ?? 'movimiento').trim()}" ya estaba registrado · omitido`,
+            })
+            continue
+          }
+        }
         const accounts = await db.account.findMany({ orderBy: { createdAt: 'asc' } })
         if (accounts.length === 0) {
           results.push({ ok: false, kind: 'transaction', message: 'No tienes cuentas creadas todavía' })
@@ -443,13 +527,13 @@ async function executeActions(raw: unknown, userMessage = ''): Promise<ChatActio
             description,
             source: 'AI_CHAT',
             rateVesUsd,
-            date: safeDate(t.date),
+            date: safeDate(t.date, t.time),
           },
         })
         if (tagIds.length) {
+          // SQLite no soporta skipDuplicates en createMany: deduplicamos antes
           await db.transactionTag.createMany({
-            data: tagIds.slice(0, 5).map((tagId) => ({ transactionId: created.id, tagId })),
-            skipDuplicates: true,
+            data: [...new Set(tagIds)].slice(0, 5).map((tagId) => ({ transactionId: created.id, tagId })),
           })
         }
         const full = await db.transaction.findUnique({ where: { id: created.id }, include: TX_INCLUDE })
@@ -709,13 +793,21 @@ async function executeActions(raw: unknown, userMessage = ''): Promise<ChatActio
   return results
 }
 
-/** Pipeline completo: mensaje → contexto → LLM → acciones → respuesta */
-export async function handleChatMessage(message: string): Promise<ChatPipelineResult> {
+/** Pipeline completo: mensaje (+ capturas opcionales) → contexto → LLM → acciones → respuesta */
+export async function handleChatMessage(
+  message: string,
+  images: string[] = []
+): Promise<ChatPipelineResult> {
   const context = await buildContext()
-  const completion = await chatText([
-    { role: 'assistant', content: systemPrompt(context) },
-    { role: 'user', content: message },
-  ])
+  const userText =
+    message.trim() || 'Estas son capturas de pantalla de mis movimientos: regístralos todos.'
+  const completion = await chatText(
+    [
+      { role: 'assistant', content: systemPrompt(context, images.length) },
+      { role: 'user', content: userText },
+    ],
+    images
+  )
   const json = extractJson<{ reply?: string; actions?: unknown[] }>(completion)
   if (!json || typeof json.reply !== 'string') {
     return {
@@ -724,6 +816,22 @@ export async function handleChatMessage(message: string): Promise<ChatPipelineRe
       results: [],
     }
   }
-  const results = await executeActions(json.actions ?? [], message)
-  return { reply: json.reply, results }
+  const results = await executeActions(json.actions ?? [], message, images.length > 0)
+
+  // Con capturas: la respuesta del LLM puede sobreestimar (filas ilegibles
+  // omitidas, duplicados de scroll). Prefijamos el conteo real.
+  let reply = json.reply
+  if (images.length > 0 && results.length > 0) {
+    const dupes = results.filter((r) => r.ok && r.message.includes('ya estaba registrado')).length
+    const failed = results.filter((r) => !r.ok).length
+    const created = results.filter((r) => r.ok).length - dupes
+    if (dupes > 0 || failed > 0) {
+      reply =
+        `✅ Guardé ${created} movimiento${created === 1 ? '' : 's'}` +
+        (dupes > 0 ? ` · ${dupes} ya ${dupes === 1 ? 'estaba' : 'estaban'} registrados` : '') +
+        (failed > 0 ? ` · ${failed} no se pudieron guardar` : '') +
+        `.\n\n${json.reply}`
+    }
+  }
+  return { reply, results }
 }

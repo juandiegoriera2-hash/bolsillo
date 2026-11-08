@@ -51,7 +51,10 @@ async function openAiChatOnce(messages: unknown[], model: string, cfg: OpenAiCfg
   return fetch(`${cfg.base}/chat/completions`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${cfg.key}` },
-    body: JSON.stringify({ model, messages }),
+    // sin max_tokens Groq corta en 1024: una importación de capturas con
+    // 20+ movimientos (JSON largo) quedaría truncada. 8000 es seguro
+    // para gpt-oss-120b y llama-4-scout (límite 8192).
+    body: JSON.stringify({ model, messages, max_tokens: 8000 }),
   })
 }
 
@@ -103,17 +106,53 @@ export function aiErrorMessage(e: unknown, fallback: string): string {
 
 export type SimpleMessage = { role: 'user' | 'assistant'; content: string }
 
-/** Chat de texto (system prompt va como primer mensaje 'assistant' según el SDK) */
-export async function chatText(messages: SimpleMessage[]): Promise<string> {
+type ContentPart =
+  | { type: 'text'; text: string }
+  | { type: 'image_url'; image_url: { url: string } }
+
+/**
+ * Chat de texto (system prompt va como primer mensaje 'assistant' según el SDK).
+ * Si se adjuntan imágenes (data URLs), el último mensaje de usuario se convierte
+ * en contenido multimodal y en producción se usa el modelo de visión
+ * (AI_VISION_MODEL, ej. Groq llama-4-scout).
+ */
+export async function chatText(messages: SimpleMessage[], images: string[] = []): Promise<string> {
+  const multimodal = images.length > 0
+  // construir mensajes con partes de imagen (el texto va en el último mensaje de usuario)
+  let built: Array<{ role: string; content: unknown }> = messages
+  if (multimodal) {
+    built = messages.map((m, i) => {
+      const isLastUser = i === messages.length - 1 && m.role === 'user'
+      if (!isLastUser) return { role: m.role, content: m.content }
+      const parts: ContentPart[] = m.content ? [{ type: 'text', text: m.content }] : []
+      for (const url of images) parts.push({ type: 'image_url', image_url: { url } })
+      return { role: 'user', content: parts }
+    })
+    // sin mensaje de texto: enviar solo las imágenes como mensaje de usuario
+    if (!built.some((m) => Array.isArray(m.content))) {
+      built = [
+        ...built,
+        {
+          role: 'user',
+          content: images.map((url) => ({ type: 'image_url', image_url: { url } })),
+        },
+      ]
+    }
+  }
   // 1) z-ai (entorno de desarrollo)
   //    Reintenta 1 vez con config fresca si el token cacheado caducó (rotación).
   for (let attempt = 0; attempt < 2; attempt++) {
     try {
       const zai = await getZai()
-      const completion = await zai.chat.completions.create({
-        messages,
-        thinking: { type: 'disabled' },
-      })
+      const completion = multimodal
+        ? await zai.chat.completions.createVision({
+            messages: built,
+            thinking: { type: 'disabled' },
+          })
+        : await zai.chat.completions.create({
+            messages,
+            thinking: { type: 'disabled' },
+          })
       const out = completion?.choices?.[0]?.message?.content ?? ''
       if (out) return out
       console.warn('[ai] zai chat respondió vacío')
@@ -130,7 +169,7 @@ export async function chatText(messages: SimpleMessage[]): Promise<string> {
   }
   // 2) OpenAI-compatible (producción)
   const cfg = openAiConfig()
-  if (cfg) return openAiChat(messages, cfg.model, cfg)
+  if (cfg) return openAiChat(built, multimodal ? cfg.visionModel : cfg.model, cfg)
   throw new Error(NO_AI_MSG)
 }
 
