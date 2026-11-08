@@ -6,7 +6,7 @@
  *    sin conexión con la última copia de los datos (modo offline)
  *  - POST/PATCH/DELETE /api: siempre red (la cola offline los reintenta)
  */
-const CACHE = 'bolsillo-v3'
+const CACHE = 'bolsillo-v4'
 const PRECACHE = ['/', '/manifest.webmanifest', '/icons/icon-192.png', '/icons/icon-512.png']
 
 self.addEventListener('install', (event) => {
