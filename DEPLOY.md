@@ -85,11 +85,11 @@ Tendrás dos valores: **URL** y **Token**. Los necesitarás en el paso 3.
 
 ---
 
-## 🤖 IA opcional (gratis con Groq — incluye la VOZ)
+## 🤖 IA opcional (gratis con Groq — texto, voz y resumen semanal)
 
-El asistente, el escáner de comprobantes, el resumen semanal y la
-**entrada por voz** usan IA. En el despliegue puedes activarlos **gratis**
-con [Groq](https://groq.com) (registro rápido, sin tarjeta):
+El asistente, el resumen semanal y la **entrada por voz** usan IA. En el
+despliegue puedes activarlos **gratis** con [Groq](https://groq.com)
+(registro rápido, sin tarjeta):
 
 1. Crea una cuenta en **console.groq.com** → **API Keys** → **Create API
    Key** → copia la clave (`gsk_…`).
@@ -99,17 +99,42 @@ con [Groq](https://groq.com) (registro rápido, sin tarjeta):
    |---|---|
    | `AI_BASE_URL` | `https://api.groq.com/openai/v1` |
    | `AI_API_KEY` | tu clave `gsk_…` |
-   | `AI_MODEL` | `llama-3.3-70b-versatile` |
-   | `AI_VISION_MODEL` | `meta-llama/llama-4-scout-17b-16e-instruct` |
+   | `AI_MODEL` | `openai/gpt-oss-120b,openai/gpt-oss-20b` |
    | `AI_ASR_MODEL` | `whisper-large-v3` |
 
 3. **Deployments → … → Redeploy** para que aplique.
 
 Los nombres de modelos cambian con el tiempo: si alguno falla, revisa la
-lista en console.groq.com/settings/models y ajusta la variable.
-Alternativa solo texto/OCR: OpenRouter (`https://openrouter.ai/api/v1`,
-modelos con sufijo `:free`; sin voz). Sin estas variables la app funciona
-normal; solo la IA muestra un aviso de que no está activa.
+lista en console.groq.com/settings/models y ajusta la variable. Puedes
+poner varios modelos separados por coma en `AI_MODEL`: si uno falla
+(saturado o retirado) se salta al siguiente automáticamente.
+
+## 📷 Leer capturas con IA (visión — gratis con Google)
+
+El asistente puede **leer capturas de pantalla** de tu banco o de otra
+app: las pegas (Ctrl+V) o adjuntas, y registra todos los movimientos
+solo (con anti-duplicados si las capturas se solapan).
+
+Groq retiró sus modelos de visión, así que para esto se usa **Google AI
+Studio (Gemini)** — gratis, sin tarjeta, 1.500 lecturas al día:
+
+1. Entra en **aistudio.google.com** con tu cuenta de Gmail.
+2. Toca **“Get API key”** (Obtener clave de API) → **“Create API key”**
+   → copia la clave (empieza con `AIza…`).
+3. En Vercel: **Settings → Environment Variables**, agrega estas 3:
+
+   | Name | Value |
+   |---|---|
+   | `VISION_BASE_URL` | `https://generativelanguage.googleapis.com/v1beta/openai` |
+   | `VISION_API_KEY` | tu clave `AIza…` |
+   | `VISION_MODEL` | `gemini-2.0-flash` |
+
+4. **Deployments → el más reciente → … → Redeploy** para que aplique.
+
+Sin estas variables, el resto de la app (chat de texto, voz, todo)
+sigue funcionando normal; solo las capturas muestran un aviso de cómo
+activarlas. También sirve cualquier proveedor compatible con OpenAI
+que tenga modelos de visión (ej. OpenRouter con modelos `:free`).
 
 ## 🔄 Actualizar la app más adelante
 

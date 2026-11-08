@@ -150,6 +150,10 @@ async function openAiChat(messages: unknown[], models: string[], cfg: OpenAiCfg)
 export const NO_AI_MSG =
   'La IA no está disponible en este despliegue. Puedes activarla gratis desde Vercel con las variables AI_BASE_URL, AI_API_KEY y AI_MODEL (ver DEPLOY.md, sección IA).'
 
+/** Sin modelo de visión disponible (Groq retiró los suyos): instrucción clara */
+export const NO_VISION_MSG =
+  'IA: este despliegue no tiene modelo de visión, así que no puedo leer capturas todavía. Arreglado en 3 minutos: agrega VISION_BASE_URL, VISION_API_KEY y VISION_MODEL en Vercel con una clave gratis de Google AI Studio (pasos exactos en DEPLOY.md, sección “Leer capturas con IA”). El chat de texto y voz siguen funcionando normal.'
+
 /** Mensaje de error para rutas: prioriza el mensaje explicativo de la capa IA */
 export function aiErrorMessage(e: unknown, fallback: string): string {
   return e instanceof Error && (e.message.startsWith('La IA no') || e.message.startsWith('IA:'))
@@ -163,15 +167,56 @@ type ContentPart =
   | { type: 'text'; text: string }
   | { type: 'image_url'; image_url: { url: string } }
 
+/** Llamada de VISIÓN (mensajes con imágenes) a proveedor OpenAI-compatible:
+ *  cadena de rescate → 1) proveedor dedicado VISION_* si existe →
+ *  2) modelo de visión del proveedor general (AI_VISION_MODEL/AI_MODEL) →
+ *  3) autodetección de candidatos con visión en el catálogo del proveedor
+ *  (por si Groq retira/renombra el modelo configurado). */
+async function openAiVision(messages: unknown[]): Promise<string> {
+  // 1) proveedor de visión dedicado (VISION_*)
+  const vcfg = visionProviderConfig()
+  if (vcfg) {
+    try {
+      return await openAiChat(messages, vcfg.visionModel, vcfg)
+    } catch (e) {
+      console.warn('[ai] proveedor de visión dedicado falló:', e instanceof Error ? e.message : e)
+    }
+  }
+  // 2) proveedor general con modelo de visión
+  const cfg = openAiConfig()
+  if (cfg) {
+    try {
+      return await openAiChat(messages, cfg.visionModel, cfg)
+    } catch (e) {
+      // 3) modelo retirado/renombreado (404/403): buscar candidatos con
+      // visión en el catálogo real del proveedor y reintentar. Los modelos
+      // sin visión fallan con 400 y se saltan solos.
+      const msg = e instanceof Error ? e.message : String(e)
+      if (/respondi\u00f3 40[43]/.test(msg)) {
+        const catalog = await listProviderModels(cfg)
+        const fresh = catalog.filter(
+          (id) => looksLikeVisionModel(id) && !cfg.visionModel.includes(id)
+        )
+        if (fresh.length) {
+          console.warn('[ai] modelos de visión configurados fallaron; reintentando con:', fresh.slice(0, 3).join(', '))
+          return await openAiChat(messages, fresh.slice(0, 3), cfg)
+        }
+        throw new Error(NO_VISION_MSG)
+      }
+      throw e
+    }
+  }
+  throw new Error(NO_AI_MSG)
+}
+
 /**
  * Chat de texto (system prompt va como primer mensaje 'assistant' según el SDK).
  * Si se adjuntan imágenes (data URLs), el último mensaje de usuario se convierte
- * en contenido multimodal y en producción se usa el modelo de visión
- * (AI_VISION_MODEL, ej. Groq llama-4-scout).
+ * en contenido multimodal y en producción se usa la cadena de visión
+ * (VISION_* → AI_VISION_MODEL → autodetección).
  */
 export async function chatText(messages: SimpleMessage[], images: string[] = []): Promise<string> {
   const multimodal = images.length > 0
-  // construir mensajes con partes de imagen (el texto va en el último mensaje de usuario)
   let built: Array<{ role: string; content: unknown }> = messages
   if (multimodal) {
     built = messages.map((m, i) => {
@@ -220,39 +265,12 @@ export async function chatText(messages: SimpleMessage[], images: string[] = [])
       break
     }
   }
-  // 2) Proveedor de visión dedicado (VISION_*), solo para llamadas con imágenes
-  if (multimodal) {
-    const vcfg = visionProviderConfig()
-    if (vcfg) {
-      try {
-        return await openAiChat(built, vcfg.visionModel, vcfg)
-      } catch (e) {
-        console.warn('[ai] proveedor de visión dedicado falló:', e instanceof Error ? e.message : e)
-      }
-    }
-  }
-  // 3) OpenAI-compatible (producción)
+  // 2) Proveedor OpenAI-compatible (producción); con imágenes usa la
+  //    cadena de visión (VISION_* → AI_VISION_MODEL → autodetección)
   const cfg = openAiConfig()
   if (cfg) {
-    try {
-      return await openAiChat(built, multimodal ? cfg.visionModel : cfg.model, cfg)
-    } catch (e) {
-      // Visión: si todos los modelos configurados fallaron (retiro/renombre
-      // ej. llama-4-scout → 404), autodetectar candidatos con visión del
-      // catálogo del proveedor y reintentar. Los modelos sin visión fallan
-      // con 400 y se saltan solos.
-      if (multimodal) {
-        const catalog = await listProviderModels(cfg)
-        const fresh = catalog.filter(
-          (id) => looksLikeVisionModel(id) && !cfg.visionModel.includes(id)
-        )
-        if (fresh.length) {
-          console.warn('[ai] modelos de visión configurados fallaron; reintentando con:', fresh.slice(0, 3).join(', '))
-          return await openAiChat(built, fresh.slice(0, 3), cfg)
-        }
-      }
-      throw e
-    }
+    if (multimodal) return openAiVision(built)
+    return openAiChat(built, cfg.model, cfg)
   }
   throw new Error(NO_AI_MSG)
 }
@@ -288,24 +306,17 @@ export async function visionText(prompt: string, imageDataUrl: string): Promise<
       break
     }
   }
-  // 2) OpenAI-compatible con modelo de visión (producción)
-  const cfg = openAiConfig()
-  if (cfg) {
-    return openAiChat(
-      [
-        {
-          role: 'user',
-          content: [
-            { type: 'text', text: prompt },
-            { type: 'image_url', image_url: { url: imageDataUrl } },
-          ],
-        },
+  // 2) Proveedor OpenAI-compatible: misma cadena de visión que el chat
+  //    (VISION_* → AI_VISION_MODEL → autodetección en catálogo)
+  return openAiVision([
+    {
+      role: 'user',
+      content: [
+        { type: 'text', text: prompt },
+        { type: 'image_url', image_url: { url: imageDataUrl } },
       ],
-      cfg.visionModel,
-      cfg
-    )
-  }
-  throw new Error(NO_AI_MSG)
+    },
+  ])
 }
 
 /** Transcripción de voz (ASR) desde base64.
