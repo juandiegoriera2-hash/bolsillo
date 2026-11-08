@@ -89,3 +89,4 @@ self.addEventListener('fetch', (event) => {
     )
   }
 })
+// v2.1
