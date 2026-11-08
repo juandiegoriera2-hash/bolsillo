@@ -29,9 +29,11 @@ import {
   Sparkles,
   Target,
   TrendingUp,
+  RefreshCw,
   Wallet,
   WifiOff,
 } from 'lucide-react'
+import { queueLength, flushQueue } from '@/lib/offline-queue'
 import { Button } from '@/components/ui/button'
 import {
   Sheet,
@@ -112,44 +114,82 @@ export function BolsilloApp() {
 }
 
 // ── Indicador de conexión ────────────────────────────────────────
-// Bolsillo es una app web: los datos viven en el servidor. Sin
-// conexión no se pueden leer ni guardar movimientos. Este aviso
-// lo comunica claramente y re-sincroniza al reconectar.
+// Bolsillo es una PWA: sin conexión se abre con la última copia de los
+// datos y los movimientos nuevos se guardan en el teléfono (cola offline).
+// Al reconectar: se envía la cola y se re-sincroniza todo.
 
 function OfflineBanner() {
   const { refreshOverview, refreshMeta } = useAppStore()
   const [offline, setOffline] = useState(false)
+  const [pending, setPending] = useState(0)
+  const [syncing, setSyncing] = useState(false)
 
   useEffect(() => {
+    const updatePending = () => setPending(queueLength())
     const goOffline = () => setOffline(true)
-    const goOnline = () => {
+    const goOnline = async () => {
       setOffline(false)
-      // re-sincronizar datos al recuperar la conexión
+      // enviar lo pendiente y re-sincronizar datos al recuperar conexión
+      if (queueLength() > 0) {
+        setSyncing(true)
+        try {
+          await flushQueue()
+        } finally {
+          setSyncing(false)
+        }
+      }
       refreshOverview().catch(() => {})
       refreshMeta().catch(() => {})
     }
     window.addEventListener('offline', goOffline)
     window.addEventListener('online', goOnline)
+    window.addEventListener('bolsillo:queued', updatePending)
+    window.addEventListener('bolsillo:synced', updatePending)
     // sincronizar estado inicial (evita setState síncrono en el efecto)
-    const raf = requestAnimationFrame(() => setOffline(!navigator.onLine))
+    const raf = requestAnimationFrame(() => {
+      setOffline(!navigator.onLine)
+      setPending(queueLength())
+    })
     return () => {
       window.removeEventListener('offline', goOffline)
       window.removeEventListener('online', goOnline)
+      window.removeEventListener('bolsillo:queued', updatePending)
+      window.removeEventListener('bolsillo:synced', updatePending)
       cancelAnimationFrame(raf)
     }
   }, [refreshOverview, refreshMeta])
 
-  if (!offline) return null
+  // intento de sincronización al abrir la app (por si quedó pendiente)
+  useEffect(() => {
+    if (navigator.onLine && queueLength() > 0) {
+      flushQueue().then((n) => {
+        if (n > 0) {
+          refreshOverview().catch(() => {})
+          refreshMeta().catch(() => {})
+        }
+      })
+    }
+  }, [])
 
   return (
     <div role="status" aria-live="polite" className="px-4 sm:px-6 pt-2">
       <div className="flex items-center gap-3 rounded-2xl border border-amber-400/25 bg-amber-400/10 px-4 py-3 text-amber-200">
-        <WifiOff size={18} className="shrink-0" aria-hidden />
+        {syncing ? <RefreshCw size={18} className="shrink-0 animate-spin" aria-hidden /> : <WifiOff size={18} className="shrink-0" aria-hidden />}
         <div className="min-w-0">
-          <p className="text-sm font-semibold leading-tight">Sin conexión</p>
+          <p className="text-sm font-semibold leading-tight">
+            {syncing ? 'Enviando…' : 'Sin conexión'}
+            {pending > 0 && (
+              <span className="ml-2 rounded-full bg-amber-400/20 px-2 py-0.5 text-[10px] font-bold">
+                ⏳ {pending} en espera
+              </span>
+            )}
+          </p>
           <p className="text-[11px] leading-snug text-amber-200/70 mt-0.5">
-            Bolsillo necesita internet para leer y guardar tus datos. Se
-            sincroniza solo al reconectar.
+            {pending > 0
+              ? 'Tus movimientos nuevos se guardaron en el teléfono. Se envían solos al reconectar.'
+              : syncing
+                ? 'Enviando los movimientos pendientes…'
+                : 'Puedes seguir anotando movimientos: se guardarán en el teléfono y se enviarán al reconectar.'}
           </p>
         </div>
       </div>

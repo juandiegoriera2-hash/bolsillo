@@ -16,6 +16,7 @@ import type {
   TxDTO,
 } from './types'
 import type { RateSnapshot } from '@/lib/finance'
+import { enqueue as enqueueTxOffline } from '@/lib/offline-queue'
 
 async function req<T>(url: string, init?: RequestInit): Promise<T> {
   let res: Response
@@ -98,8 +99,20 @@ export const api = {
       hasMore: boolean
     }>(`/api/transactions?${sp.toString()}`)
   },
-  createTransaction: (data: Record<string, unknown>) =>
-    req<TxDTO>('/api/transactions', { method: 'POST', body: JSON.stringify(data) }),
+  createTransaction: (data: Record<string, unknown>) => {
+    // Sin conexión: encolar en el teléfono y responder OK sintético.
+    // La cola se envía sola al recuperar internet (offline-queue).
+    if (typeof window !== 'undefined' && !navigator.onLine) {
+      const queued = enqueueTxOffline({
+        url: '/api/transactions',
+        method: 'POST',
+        body: JSON.stringify(data),
+        label: 'Movimiento pendiente',
+      })
+      if (queued) return Promise.resolve({ __queuedOffline: true } as unknown as TxDTO)
+    }
+    return req<TxDTO>('/api/transactions', { method: 'POST', body: JSON.stringify(data) })
+  },
   updateTransaction: (id: string, data: Record<string, unknown>) =>
     req<TxDTO>(`/api/transactions/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
   deleteTransaction: (id: string) =>

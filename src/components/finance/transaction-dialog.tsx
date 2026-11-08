@@ -195,20 +195,29 @@ export function TransactionDialog() {
         await api.updateTransaction(editing.id, payload)
         toast({ title: 'Movimiento actualizado ✓' })
       } else {
-        await api.createTransaction(payload)
-        toast({
-          title: `${type === 'EXPENSE' ? 'Gasto' : type === 'INCOME' ? 'Ingreso' : 'Transferencia'} registrado ✓`,
-          description: `${formatMoney(finalAmount, currency)}${
-            convertedAmount != null
-              ? ` (anotaste ${formatMoney(amountNum, entryCurrency)})`
-              : description.trim()
-                ? ` · ${description.trim()}`
-                : ''
-          }`,
-        })
+        const created = await api.createTransaction(payload)
+        if ((created as { __queuedOffline?: boolean }).__queuedOffline) {
+          // guardado en el teléfono sin conexión: se enviará solo al reconectar
+          toast({
+            title: 'Guardado sin conexión ⏳',
+            description:
+              'Quedó en espera en el teléfono y se enviará automáticamente cuando haya internet.',
+          })
+        } else {
+          toast({
+            title: `${type === 'EXPENSE' ? 'Gasto' : type === 'INCOME' ? 'Ingreso' : 'Transferencia'} registrado ✓`,
+            description: `${formatMoney(finalAmount, currency)}${
+              convertedAmount != null
+                ? ` (anotaste ${formatMoney(amountNum, entryCurrency)})`
+                : description.trim()
+                  ? ` · ${description.trim()}`
+                  : ''
+            }`,
+          })
+        }
       }
       closeTxDialog()
-      await Promise.all([refreshOverview(), refreshMeta()])
+      if (navigator.onLine) await Promise.all([refreshOverview(), refreshMeta()])
     } catch (e) {
       toast({ title: 'Error', description: (e as Error).message, variant: 'destructive' })
     } finally {

@@ -2,9 +2,11 @@
  * Estrategia dev-safe:
  *  - Navegación: network-first con fallback a caché (evita contenido viejo en dev)
  *  - Estáticos e íconos: stale-while-revalidate
- *  - /api: siempre red (datos frescos)
+ *  - GET /api: network-first con caché de respaldo — permite abrir la app
+ *    sin conexión con la última copia de los datos (modo offline)
+ *  - POST/PATCH/DELETE /api: siempre red (la cola offline los reintenta)
  */
-const CACHE = 'bolsillo-v1'
+const CACHE = 'bolsillo-v2'
 const PRECACHE = ['/', '/manifest.webmanifest', '/icons/icon-192.png', '/icons/icon-512.png']
 
 self.addEventListener('install', (event) => {
@@ -28,7 +30,33 @@ self.addEventListener('fetch', (event) => {
 
   const url = new URL(req.url)
   if (url.origin !== self.location.origin) return
-  if (url.pathname.startsWith('/api/')) return // datos siempre frescos
+
+  // GET /api: network-first con respaldo en caché (modo offline).
+  // Solo consultas de lectura (sin action/refresh): las de refrescar tasas
+  // o desbloquear PIN no se sirven nunca desde caché.
+  if (url.pathname.startsWith('/api/')) {
+    const noCache = url.searchParams.has('action') || url.searchParams.has('deep') || url.searchParams.has('ai') || url.pathname.startsWith('/api/auth')
+    if (noCache) return
+    event.respondWith(
+      fetch(req)
+        .then((res) => {
+          const copy = res.clone()
+          caches.open(CACHE).then((c) => c.put(req, copy)).catch(() => {})
+          return res
+        })
+        .catch(() =>
+          caches.match(req).then(
+            (m) =>
+              m ||
+              new Response(JSON.stringify({ error: 'Sin conexión' }), {
+                status: 503,
+                headers: { 'Content-Type': 'application/json' },
+              }),
+          ),
+        )
+    )
+    return
+  }
 
   if (req.mode === 'navigate') {
     // network-first
