@@ -2,10 +2,11 @@
 //   /api/health            → variables detectadas
 //   /api/health?deep=1     → + consulta real a la base de datos
 //   /api/health?ai=1       → + prueba real de la IA (chat 1 mensaje)
+//   /api/health?models=1   → + catálogo de modelos del proveedor de IA
 import { NextResponse } from 'next/server'
 import { tursoConfig, db } from '@/lib/db'
 import { ensureSchema } from '@/lib/seed'
-import { chatText } from '@/lib/ai'
+import { chatText, providerModels } from '@/lib/ai'
 
 export const dynamic = 'force-dynamic'
 
@@ -13,6 +14,7 @@ export async function GET(req: Request) {
   const t = tursoConfig()
   const deep = new URL(req.url).searchParams.get('deep') === '1'
   const ai = new URL(req.url).searchParams.get('ai') === '1'
+  const models = new URL(req.url).searchParams.get('models') === '1'
   const base = {
     ok: true,
     modo: t ? 'turso' : 'local',
@@ -43,6 +45,11 @@ export async function GET(req: Request) {
         { status: 500 },
       )
     }
+  }
+  if (models) {
+    const catalog = await providerModels()
+    if (!catalog) return NextResponse.json({ ...base, models: 'proveedor de IA no configurado' })
+    return NextResponse.json({ ...base, provider: catalog })
   }
   if (ai) {
     const t0 = Date.now()

@@ -70,6 +70,59 @@ function modelList(raw: string | undefined): string[] {
 
 const DEFAULT_MODELS = 'gpt-4o-mini'
 
+/** Proveedor de visión dedicado (VISION_*): opcional, permite usar un
+ *  proveedor distinto solo para imágenes (ej. OpenRouter gratis) sin
+ *  tocar el proveedor de chat (AI_*). */
+function visionProviderConfig(): OpenAiCfg | null {
+  const base = process.env.VISION_BASE_URL
+  const key = process.env.VISION_API_KEY
+  if (!base || !key) return null
+  const models = modelList(process.env.VISION_MODEL)
+  return {
+    base: base.replace(/\/+$/, ''),
+    key,
+    model: models,
+    visionModel: models,
+  }
+}
+
+/** ¿El ID de un modelo parece tener capacidad de visión? (heurística
+ *  para autodetectar reemplazos cuando el configurado fue retirado) */
+function looksLikeVisionModel(id: string): boolean {
+  return /vision|multimodal|scout|maverick|pixtral|gemma|(^|[-/_])vl([-/_]|$)/i.test(id)
+}
+
+/** Catálogo de modelos del proveedor (GET /models, compatible OpenAI) */
+async function listProviderModels(cfg: OpenAiCfg): Promise<string[]> {
+  try {
+    const res = await fetch(`${cfg.base}/models`, {
+      headers: { Authorization: `Bearer ${cfg.key}` },
+    })
+    if (!res.ok) return []
+    const json = (await res.json()) as { data?: Array<{ id?: string }> }
+    return (json?.data ?? []).map((m) => String(m?.id ?? '')).filter(Boolean)
+  } catch {
+    return []
+  }
+}
+
+/** Catálogo para diagnóstico (/api/health?models=1): lista los modelos
+ *  disponibles en el proveedor de IA configurado. */
+export async function providerModels(): Promise<{
+  base: string
+  chatModels: string[]
+  visionCandidates: string[]
+} | null> {
+  const cfg = openAiConfig()
+  if (!cfg) return null
+  const catalog = await listProviderModels(cfg)
+  return {
+    base: cfg.base,
+    chatModels: catalog,
+    visionCandidates: catalog.filter(looksLikeVisionModel),
+  }
+}
+
 async function openAiChat(messages: unknown[], models: string[], cfg: OpenAiCfg): Promise<string> {
   let lastErr = 'sin modelos configurados'
   for (const model of models) {
@@ -79,8 +132,8 @@ async function openAiChat(messages: unknown[], models: string[], cfg: OpenAiCfg)
         const json = (await res.json()) as any
         return json?.choices?.[0]?.message?.content ?? ''
       }
-      if (res.status === 429 || res.status === 404 || res.status === 400) {
-        // este modelo está saturado o ya no existe: probar el siguiente
+      if (res.status === 429 || res.status === 404 || res.status === 400 || res.status === 403) {
+        // este modelo está saturado, retirado o sin acceso: probar el siguiente
         lastErr = `el modelo «${model}» respondió ${res.status}`
         continue
       }
@@ -167,9 +220,40 @@ export async function chatText(messages: SimpleMessage[], images: string[] = [])
       break
     }
   }
-  // 2) OpenAI-compatible (producción)
+  // 2) Proveedor de visión dedicado (VISION_*), solo para llamadas con imágenes
+  if (multimodal) {
+    const vcfg = visionProviderConfig()
+    if (vcfg) {
+      try {
+        return await openAiChat(built, vcfg.visionModel, vcfg)
+      } catch (e) {
+        console.warn('[ai] proveedor de visión dedicado falló:', e instanceof Error ? e.message : e)
+      }
+    }
+  }
+  // 3) OpenAI-compatible (producción)
   const cfg = openAiConfig()
-  if (cfg) return openAiChat(built, multimodal ? cfg.visionModel : cfg.model, cfg)
+  if (cfg) {
+    try {
+      return await openAiChat(built, multimodal ? cfg.visionModel : cfg.model, cfg)
+    } catch (e) {
+      // Visión: si todos los modelos configurados fallaron (retiro/renombre
+      // ej. llama-4-scout → 404), autodetectar candidatos con visión del
+      // catálogo del proveedor y reintentar. Los modelos sin visión fallan
+      // con 400 y se saltan solos.
+      if (multimodal) {
+        const catalog = await listProviderModels(cfg)
+        const fresh = catalog.filter(
+          (id) => looksLikeVisionModel(id) && !cfg.visionModel.includes(id)
+        )
+        if (fresh.length) {
+          console.warn('[ai] modelos de visión configurados fallaron; reintentando con:', fresh.slice(0, 3).join(', '))
+          return await openAiChat(built, fresh.slice(0, 3), cfg)
+        }
+      }
+      throw e
+    }
+  }
   throw new Error(NO_AI_MSG)
 }
 
