@@ -10,12 +10,15 @@ import {
   getGoalsWithProgress,
   getAnalytics,
   getSettings,
+  ensureBinanceAccount,
 } from '@/lib/queries'
 import { serializeTx, TX_INCLUDE } from '@/lib/dto'
 
 export async function GET() {
   try {
     await ensureSeed()
+    // cuenta fija Binance USDT: crearla si es la primera vez
+    await ensureBinanceAccount().catch(() => {})
     const settings = await getSettings()
     const rates = await getRateSnapshot()
     const [netWorth, accounts, recent, budgets, debts, goals, analytics, history] =
@@ -54,6 +57,10 @@ export async function GET() {
         totalUsd: netWorth.totalUsd,
         totalVes: netWorth.totalVes,
         byCurrency: netWorth.byCurrency,
+        binanceUsdt: netWorth.binanceUsdt,
+        binanceUsd: netWorth.binanceUsd,
+        accountsUsd: netWorth.accountsUsd,
+        accountsVes: netWorth.accountsVes,
       },
       accounts,
       recent: recent.map(serializeTx),

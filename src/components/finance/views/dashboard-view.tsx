@@ -92,6 +92,11 @@ export function DashboardView() {
   const prevWeekExpense = overview?.week.prevExpenseUsd ?? 0
   const weekDelta = prevWeekExpense > 0 ? ((weekExpense - prevWeekExpense) / prevWeekExpense) * 100 : null
 
+  // cuenta fija de Binance (USDT) — puede no existir aún en datos cacheados
+  const binanceAcc =
+    overview?.accounts.find((a) => a.type === 'BINANCE') ??
+    overview?.accounts.find((a) => a.currency === 'USDT')
+
   const doRefresh = async () => {
     setRefreshing(true)
     try {
@@ -176,7 +181,7 @@ export function DashboardView() {
         {/* monedas que componen el patrimonio */}
         <div className="flex flex-wrap gap-2 mt-4">
           {Object.entries(overview.netWorth.byCurrency)
-            .filter(([, v]) => Math.abs(v) > 0.005)
+            .filter(([cur, v]) => Math.abs(v) > 0.005 && cur !== 'USDT')
             .map(([cur, val]) => (
               <span
                 key={cur}
@@ -186,6 +191,35 @@ export function DashboardView() {
                 <span className="tnum text-foreground/85">{formatMoney(val, cur as Currency, false)}</span>
               </span>
             ))}
+        </div>
+
+        {/* patrimonio separado: cuentas (Bs) + Binance USDT fija */}
+        <div className="grid grid-cols-2 gap-3 mt-3">
+          <div className="rounded-2xl bg-secondary/50 px-4 py-3">
+            <p className="text-[10px] uppercase tracking-widest text-muted-foreground">Cuentas (bancos y efectivo)</p>
+            <p className="tnum text-lg font-bold mt-1">
+              {formatMoney(overview.netWorth.accountsVes ?? 0, 'VES', false)}
+            </p>
+            <p className="text-[10px] text-muted-foreground tnum">
+              ≈ {formatMoney(overview.netWorth.accountsUsd ?? 0, 'USD', false)}
+            </p>
+          </div>
+          <button
+            onClick={() =>
+              binanceAcc &&
+              openTxDialog({ prefill: { type: 'TRANSFER', toAccountId: binanceAcc.id } })
+            }
+            className="rounded-2xl border border-[#f0b90b]/30 bg-[#f0b90b]/10 px-4 py-3 text-left hover:border-[#f0b90b]/50 transition-colors active:scale-[0.98]"
+            aria-label="Ver cuenta Binance o enviar dinero a Binance"
+          >
+            <p className="text-[10px] uppercase tracking-widest text-[#f0b90b]">🟡 Binance · USDT</p>
+            <p className="tnum text-lg font-bold mt-1 text-[#f0b90b]">
+              {formatMoney(overview.netWorth.binanceUsdt ?? 0, 'USDT', false)}
+            </p>
+            <p className="text-[10px] text-muted-foreground tnum">
+              ≈ {formatMoney(overview.netWorth.binanceUsd ?? 0, 'USD', false)} · toca para enviar
+            </p>
+          </button>
         </div>
       </section>
 

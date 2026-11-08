@@ -18,6 +18,15 @@ import type {
 import type { RateSnapshot } from '@/lib/finance'
 import { enqueue as enqueueTxOffline } from '@/lib/offline-queue'
 
+/** Error de red (sin conexión / servidor inalcanzable). Distinguible de los
+ *  errores del servidor (400/500 con mensaje) para poder encolar offline. */
+export class NetworkError extends Error {
+  constructor(msg = 'Sin conexión al servidor. Revisa tu internet e inténtalo de nuevo.') {
+    super(msg)
+    this.name = 'NetworkError'
+  }
+}
+
 async function req<T>(url: string, init?: RequestInit): Promise<T> {
   let res: Response
   try {
@@ -27,7 +36,16 @@ async function req<T>(url: string, init?: RequestInit): Promise<T> {
     })
   } catch {
     // fallo de red (sin conexión / servidor inalcanzable)
-    throw new Error('Sin conexión al servidor. Revisa tu internet e inténtalo de nuevo.')
+    if (typeof window !== 'undefined') window.dispatchEvent(new CustomEvent('bolsillo:stale'))
+    throw new NetworkError()
+  }
+  // el Service Worker marcó la respuesta como servida desde caché
+  // (sin conexión): los datos son la última copia guardada
+  const swOffline = res.headers.get('X-Bolsillo-Offline') === '1'
+  if (swOffline && typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent('bolsillo:stale'))
+  } else if (res.ok && typeof window !== 'undefined' && (init?.method ?? 'GET') === 'GET') {
+    window.dispatchEvent(new CustomEvent('bolsillo:fresh'))
   }
   const text = await res.text()
   let json: unknown = null
@@ -37,6 +55,8 @@ async function req<T>(url: string, init?: RequestInit): Promise<T> {
     json = null
   }
   if (!res.ok) {
+    // respuesta del SW sin conexión real (503 marcado): es un fallo de red
+    if (swOffline) throw new NetworkError()
     // candado PIN (producción): la API responde 401 hasta desbloquear
     if (res.status === 401 && typeof window !== 'undefined') {
       window.dispatchEvent(new CustomEvent('bolsillo:locked'))
@@ -100,23 +120,38 @@ export const api = {
     }>(`/api/transactions?${sp.toString()}`)
   },
   createTransaction: (data: Record<string, unknown>) => {
-    // Sin conexión: encolar en el teléfono y responder OK sintético.
-    // La cola se envía sola al recuperar internet (offline-queue).
-    if (typeof window !== 'undefined' && !navigator.onLine) {
+    // Sin conexión (o red caída a mitad): encolar en el teléfono y responder
+    // OK sintético. La cola se envía sola al recuperar internet.
+    const offlineEnqueue = () => {
       const queued = enqueueTxOffline({
         url: '/api/transactions',
         method: 'POST',
         body: JSON.stringify(data),
         label: 'Movimiento pendiente',
       })
-      if (queued) return Promise.resolve({ __queuedOffline: true } as unknown as TxDTO)
+      return Promise.resolve({ __queuedOffline: true } as unknown as TxDTO)
     }
-    return req<TxDTO>('/api/transactions', { method: 'POST', body: JSON.stringify(data) })
+    if (typeof window !== 'undefined' && !navigator.onLine) return offlineEnqueue()
+    return req<TxDTO>('/api/transactions', { method: 'POST', body: JSON.stringify(data) }).catch(
+      (e) => {
+        // red caída aunque el teléfono diga "online" (WiFi sin internet, etc.)
+        if (e instanceof NetworkError) return offlineEnqueue()
+        throw e
+      }
+    )
   },
   updateTransaction: (id: string, data: Record<string, unknown>) =>
     req<TxDTO>(`/api/transactions/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
   deleteTransaction: (id: string) =>
     req<{ ok: boolean }>(`/api/transactions/${id}`, { method: 'DELETE' }),
+  importTransactions: (data: {
+    accountId: string
+    items: Array<{ date: string; description: string; amount: number; reference?: string }>
+  }) =>
+    req<{ ok: boolean; created: number; duplicates: number }>('/api/transactions/import', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
 
   // ── catálogo ────────────────────────────────────────────
   createCategory: (data: { name: string; kind: string; icon: string; color: string }) =>

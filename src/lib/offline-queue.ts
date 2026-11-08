@@ -5,6 +5,7 @@
 // Eventos:
 //  · 'bolsillo:queued'   → se encoló un nuevo elemento
 //  · 'bolsillo:synced'   → la cola se vació (datos enviados)
+//  · 'bolsillo:syncfail' → hubo conexión pero el servidor no respondió
 // ─────────────────────────────────────────────────────────────────
 'use client'
 
@@ -38,6 +39,36 @@ function write(items: QueuedItem[]) {
 
 export function queueLength(): number {
   return read().length
+}
+
+/** Toda la cola (para mostrarla en la UI) */
+export function readQueue(): QueuedItem[] {
+  return read()
+}
+
+/** Elimina un elemento concreto de la cola (el usuario lo descarta) */
+export function removeQueued(id: string) {
+  write(read().filter((it) => it.id !== id))
+  window.dispatchEvent(new CustomEvent('bolsillo:queued'))
+}
+
+/** Resumen legible de un elemento en cola (ej: "Gasto Bs 4.500 · almuerzo") */
+export function queuedSummary(item: QueuedItem): string {
+  try {
+    const b = JSON.parse(item.body) as Record<string, unknown>
+    const parts: string[] = []
+    const kind =
+      b.type === 'INCOME' ? 'Ingreso' : b.type === 'TRANSFER' ? 'Transferencia' : 'Gasto'
+    parts.push(kind)
+    if (typeof b.amount === 'number' && Number.isFinite(b.amount)) {
+      const cur = String(b.currency ?? '')
+      parts.push(`${cur === 'VES' ? 'Bs' : cur === 'USD' ? '$' : cur === 'EUR' ? '€' : cur === 'USDT' ? '₮' : ''}${b.amount.toLocaleString('es-VE')}`.trim())
+    }
+    if (typeof b.description === 'string' && b.description) parts.push(b.description)
+    return parts.join(' · ')
+  } catch {
+    return item.label
+  }
 }
 
 export function enqueue(item: Omit<QueuedItem, 'id' | 'ts'>): QueuedItem {
@@ -87,6 +118,8 @@ export async function flushQueue(): Promise<number> {
       if (remaining.length === items.length) break // nada avanzó
     }
     if (sent > 0) window.dispatchEvent(new CustomEvent('bolsillo:synced'))
+    // la cola sigue llena pese a haber red: avisar para reintentar luego
+    if (sent === 0 && read().length > 0) window.dispatchEvent(new CustomEvent('bolsillo:syncfail'))
     return sent
   } finally {
     flushing = false

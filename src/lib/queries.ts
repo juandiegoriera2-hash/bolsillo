@@ -116,9 +116,16 @@ export async function getNetWorth(
   const accounts = await getAccountsWithBalances(rates)
   const byCurrency: Record<string, number> = { VES: 0, USD: 0, USDT: 0, EUR: 0 }
   let totalUsd = 0
+  let binanceUsdt = 0 // saldo USDT (Binance) — se muestra aparte
+  let binanceUsd = 0
   for (const a of accounts) {
     byCurrency[a.currency] = (byCurrency[a.currency] ?? 0) + a.balance
-    totalUsd += toUsd(a.balance, a.currency, rates, valuation)
+    const usd = toUsd(a.balance, a.currency, rates, valuation)
+    totalUsd += usd
+    if (a.currency === 'USDT') {
+      binanceUsdt += a.balance
+      binanceUsd += usd
+    }
   }
   const rateKey = valuation === 'BCV' ? 'bcv' : valuation === 'USDT_P2P' ? 'usdt' : 'paralelo'
   const r = (rates as unknown as Record<string, number | null>)[rateKey] ?? rates.paralelo ?? 1
@@ -127,6 +134,11 @@ export async function getNetWorth(
     totalVes: totalUsd * r,
     byCurrency,
     accounts,
+    // patrimonio separado: bancos/efectivo vs Binance USDT (cuenta fija)
+    binanceUsdt,
+    binanceUsd,
+    accountsUsd: totalUsd - binanceUsd,
+    accountsVes: (totalUsd - binanceUsd) * r,
   }
 }
 
@@ -625,4 +637,30 @@ export async function getSettings(): Promise<{ baseCurrency: Currency; valuation
     baseCurrency: (get('baseCurrency', 'VES') as Currency) ?? 'VES',
     valuationSource: (get('valuationSource', 'PARALELO') as ValuationSource) ?? 'PARALELO',
   }
+}
+
+/**
+ * Cuenta fija de Binance (USDT) integrada en la app: si no existe, se crea
+ * automáticamente con saldo 0. Es la cuenta a la que se "fija" el dinero
+ * convertido a USDT (como hace Binance P2P).
+ */
+export async function ensureBinanceAccount(): Promise<void> {
+  const existing = await db.account.findFirst({ where: { type: 'BINANCE' } })
+  if (existing) return
+  // también adoptar una cuenta USDT preexistente sin tipo (demo antigua)
+  const usdtAcc = await db.account.findFirst({ where: { currency: 'USDT' } })
+  if (usdtAcc) {
+    await db.account.update({ where: { id: usdtAcc.id }, data: { type: 'BINANCE' } })
+    return
+  }
+  await db.account.create({
+    data: {
+      name: 'Binance USDT',
+      type: 'BINANCE',
+      currency: 'USDT',
+      initialBalance: 0,
+      color: '#f0b90b',
+      icon: 'bitcoin',
+    },
+  })
 }

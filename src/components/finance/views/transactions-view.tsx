@@ -8,7 +8,9 @@ import { dayLabel } from '../fmt'
 import { formatMoney } from '@/lib/finance'
 import { cn } from '@/lib/utils'
 import type { TxDTO } from '../types'
-import { Search, SlidersHorizontal, X } from 'lucide-react'
+import { readQueue, removeQueued, queuedSummary, type QueuedItem } from '@/lib/offline-queue'
+import { Clock, Search, SlidersHorizontal, Trash2, Upload, X } from 'lucide-react'
+import { ImportDialog } from '../import-dialog'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -36,6 +38,7 @@ export function TransactionsView() {
   const [categoryId, setCategoryId] = useState('')
   const [accountId, setAccountId] = useState('')
   const [showFilters, setShowFilters] = useState(false)
+  const [importOpen, setImportOpen] = useState(false)
 
   const [items, setItems] = useState<TxDTO[]>([])
   const [sums, setSums] = useState({ incomeUsd: 0, expenseUsd: 0 })
@@ -43,6 +46,19 @@ export function TransactionsView() {
   const [hasMore, setHasMore] = useState(false)
   const [loading, setLoading] = useState(true)
   const [offset, setOffset] = useState(0)
+  const [pendingQueue, setPendingQueue] = useState<QueuedItem[]>([])
+
+  // cola offline: movimientos guardados en el teléfono esperando internet
+  useEffect(() => {
+    const upd = () => setPendingQueue(readQueue())
+    upd()
+    window.addEventListener('bolsillo:queued', upd)
+    window.addEventListener('bolsillo:synced', upd)
+    return () => {
+      window.removeEventListener('bolsillo:queued', upd)
+      window.removeEventListener('bolsillo:synced', upd)
+    }
+  }, [])
 
   const load = useCallback(
     async (off: number, replace: boolean) => {
@@ -113,6 +129,16 @@ export function TransactionsView() {
             </button>
           )}
         </div>
+        <Button
+          variant="outline"
+          size="icon"
+          onClick={() => setImportOpen(true)}
+          className="h-10 w-10 border-white/10 bg-secondary/40 hover:border-emerald-400/40 hover:text-emerald-300"
+          aria-label="Importar estado de cuenta del banco"
+          title="Importar estado de cuenta del banco"
+        >
+          <Upload size={15} />
+        </Button>
         <Button
           variant="outline"
           size="icon"
@@ -238,6 +264,37 @@ export function TransactionsView() {
         )}
       </div>
 
+      {/* cola offline: pendientes por enviar */}
+      {pendingQueue.length > 0 && (
+        <div className="glass rounded-2xl border border-amber-400/25 p-4 mb-4">
+          <div className="flex items-center gap-2 mb-2">
+            <Clock size={14} className="text-amber-300" />
+            <p className="text-xs font-semibold text-amber-200">
+              {pendingQueue.length} en espera — sin conexión
+            </p>
+            <span className="text-[10px] text-amber-200/70">se envían solos al reconectar</span>
+          </div>
+          <div className="max-h-44 overflow-y-auto pr-1 space-y-1.5">
+            {pendingQueue.map((q) => (
+              <div key={q.id} className="flex items-center gap-2 text-xs">
+                <span className="w-1.5 h-1.5 rounded-full bg-amber-400/70 shrink-0" />
+                <span className="flex-1 truncate text-foreground/85">{queuedSummary(q)}</span>
+                <span className="text-[10px] text-muted-foreground shrink-0">
+                  {new Date(q.ts).toLocaleTimeString('es-VE', { hour: '2-digit', minute: '2-digit' })}
+                </span>
+                <button
+                  onClick={() => removeQueued(q.id)}
+                  className="text-muted-foreground hover:text-rose-400 shrink-0"
+                  aria-label="Descartar movimiento pendiente"
+                >
+                  <Trash2 size={13} />
+                </button>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* lista */}
       {loading && items.length === 0 ? (
         <div className="space-y-2">
@@ -352,6 +409,8 @@ export function TransactionsView() {
           )}
         </div>
       )}
+
+      <ImportDialog open={importOpen} onClose={() => setImportOpen(false)} />
     </div>
   )
 }

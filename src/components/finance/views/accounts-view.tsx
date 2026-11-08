@@ -32,6 +32,7 @@ const ACCOUNT_TYPES = [
   { id: 'CASH', label: 'Efectivo' },
   { id: 'WALLET', label: 'Billetera digital' },
   { id: 'CRYPTO', label: 'Cripto' },
+  { id: 'BINANCE', label: 'Binance 🟡' },
 ]
 
 const COLOR_OPTIONS = ['#38e07f', '#f5b544', '#2dd4bf', '#c084fc', '#f43f5e', '#fb923c', '#a3e635', '#94a3b8']
@@ -61,7 +62,7 @@ export function AccountsView() {
     <div className="pb-4">
       <ViewHeader
         title="Cuentas y billeteras"
-        subtitle={`${accounts.length} cuenta(s) · Patrimonio ≈ ${formatMoney(totalVes, 'VES')} (≈ ${formatMoney(totalUsd, 'USD')})`}
+        subtitle={`${accounts.length} cuenta(s) · Cuentas ${formatMoney(overview?.netWorth.accountsVes ?? totalVes, 'VES')} + Binance ${formatMoney(overview?.netWorth.binanceUsdt ?? 0, 'USDT')}`}
       />
 
       <div className="grid sm:grid-cols-2 gap-3">

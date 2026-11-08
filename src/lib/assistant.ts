@@ -12,10 +12,13 @@ import { getAccountsWithBalances, getAnalytics, getBudgetStatuses, getSettings }
 import {
   caracasDateKey,
   convertCurrency,
+  convertEntry,
+  entryRate,
   formatMoney,
   parseAmount,
   vesRate,
   type Currency,
+  type RateChoice,
   type RateSnapshot,
   type ValuationSource,
 } from '@/lib/finance'
@@ -23,7 +26,7 @@ import { serializeTx, TX_INCLUDE } from '@/lib/dto'
 
 export type ChatActionResult = {
   ok: boolean
-  kind: 'transaction' | 'transfer' | 'budget'
+  kind: 'transaction' | 'transfer' | 'budget' | 'account'
   message: string
   transaction?: ReturnType<typeof serializeTx>
 }
@@ -81,7 +84,25 @@ const BudgetAction = z.object({
   }),
 })
 
-const ActionSchema = z.discriminatedUnion('type', [TransactionAction, TransferAction, BudgetAction])
+const CreateAccountAction = z.object({
+  type: z.literal('create_account'),
+  account: z.object({
+    name: z.string().min(1),
+    currency: z.enum(['VES', 'USD', 'USDT', 'EUR']).optional(),
+    accountType: z.enum(['BANK', 'CASH', 'WALLET', 'CRYPTO', 'BINANCE']).optional(),
+    initialBalance: z.preprocess(
+      (v) => (typeof v === 'string' ? parseAmount(v) : v),
+      z.number().min(0).optional()
+    ).optional(),
+  }),
+})
+
+const ActionSchema = z.discriminatedUnion('type', [
+  TransactionAction,
+  TransferAction,
+  BudgetAction,
+  CreateAccountAction,
+])
 
 const CYCLE_LABEL: Record<string, string> = {
   WEEKLY: 'semana',
@@ -289,17 +310,22 @@ Cuando el usuario registre un movimiento ("gasté 450 en almuerzo", "me pagaron 
   ]
 }
 
-Para mover dinero entre SUS cuentas usa:
+Para mover dinero entre SUS cuentas (misma moneda o monedas distintas) usa:
 { "type": "create_transfer", "transfer": { "amount": 20, "currency": "USD", "from": "Zinli", "to": "Efectivo $", "description": "..." } }
+Si las cuentas usan MONEDAS DISTINTAS (ej: Bs de Mercantil a Binance USDT, o dólares BCV a Binance), igual usa create_transfer: el sistema convierte solo con la tasa del día (BCV por defecto; paralelo o Binance si el usuario lo dice) y el monto queda FIJO en la moneda destino. Anúncialo con ambos montos (ej: "pasé los Bs 500.000 de Mercantil a Binance: quedaron ₮501 fijos").
 
 Para crear o ajustar presupuestos usa:
 { "type": "create_budget", "budget": { "name": "Mercado", "limitAmount": 200, "currency": "USD" o "VES", "cycle": "MONTHLY" o "WEEKLY" o "BIWEEKLY" o "CUSTOM", "customDays": 15, "category": "Comida y bebidas", "tag": "gasto hormiga" } }
+
+Para crear cuentas o billeteras nuevas ("agrégame una cuenta", "crea una cuenta de X") usa:
+{ "type": "create_account", "account": { "name": "Banco Provincial", "currency": "VES" o "USD" o "USDT" o "EUR", "accountType": "BANK" o "CASH" o "WALLET" o "CRYPTO" o "BINANCE", "initialBalance": 0 } }
 
 REGLAS:
 - FORMATO VENEZOLANO DE NÚMEROS (crítico): el usuario escribe "50.000" o "50,000" para CINCUENTA MIL, y "50,5" para cincuenta y medio. En "amount" devuelve SIEMPRE el número JSON puro, sin separadores de miles y sin comillas: "gasté 50.000 bs" → "amount": 50000 · "gasté 1.5 millones" → "amount": 1500000 · "pagué 12,50 dólares" → "amount": 12.5. NUNCA devuelvas "amount": "50.000" (string) ni 50.000 (que es solo 50).
 - "actions": [] cuando solo pregunta o conversa. Entonces usa el contexto para responder con cifras concretas.
 - Moneda: "$"/"dólares" → USD; "Bs"/"bolívares" → VES; "usdt" → USDT; "€"/"euros" → EUR. Devuelve "currency" SIEMPRE que el usuario mencione una moneda; si no menciona ninguna, omite el campo.
 - CONVERSIÓN AUTOMÁTICA: si la moneda del monto no coincide con la de la cuenta destino, el sistema la convierte solo con la tasa del día (BCV por defecto; paralelo o binance si el usuario lo pide) y la registra en la moneda de la cuenta. Anúncialo en "reply" con el monto original y su equivalente aproximado (ej: "anoté los $12, que a BCV de hoy son unos Bs 10.671"). No calcules de memoria con precisión: el sistema convierte exacto.
+- CUENTAS: si el usuario pide crear una cuenta o billetera ("agrégame una cuenta", "crea una cuenta de X"), usa create_account. Si menciona "Binance" y no existe en el contexto, créala con accountType "BINANCE" y currency "USDT". La cuenta Binance USDT es su cuenta fija de cripto: el patrimonio se muestra separado (cuentas en Bs + Binance en USDT).
 - Gasto pequeño (café, snack, dulce, empanada) → etiqueta "gasto hormiga".
 - PRESUPUESTOS: cuando el usuario pida "ponme un presupuesto de X para Y", "límite de X en Y", "quiero controlar X", crea un create_budget. Ciclo por defecto MONTHLY (usa WEEKLY solo si dice "semanal", BIWEEKLY si dice "quincenal"). Moneda del límite por defecto USD (indexado) salvo que diga Bs/bolívares. "category"/"tag" solo si el presupuesto aplica a una categoría o etiqueta del contexto; si es para el gasto total, omítelos. Usa un nombre corto y claro ("Mercado", "Café", "Transporte"). Si ya existe un presupuesto con ese nombre, el sistema actualiza su límite en vez de duplicarlo.
 - No inventes cuentas ni categorías: usa las del contexto o omite el campo.
@@ -447,15 +473,93 @@ async function executeActions(raw: unknown, userMessage = ''): Promise<ChatActio
           })
           continue
         }
-        if (from.currency !== to.currency) {
+        const fromCurrency = from.currency as Currency
+        const toCurrency = to.currency as Currency
+
+        // ── Transferencia entre monedas distintas ───────────────
+        // El sistema convierte con la tasa del día y el monto queda FIJO
+        // en la moneda destino (como hace Binance P2P).
+        if (fromCurrency !== toCurrency) {
+          const srcCurrency = (tr.currency ?? detectCurrency(userMessage) ?? fromCurrency) as Currency
+          const source = detectRateSource(userMessage)
+          const choice: RateChoice = source === 'BCV' ? 'BCV' : source === 'USDT_P2P' ? 'USDT_P2P' : 'PARALELO'
+          const eurUsd = rates.eurUsd || 1.16
+          // monto ingresado → moneda de la cuenta origen
+          const fromRate = entryRate(rates, choice, srcCurrency, fromCurrency)
+          const fromAmount =
+            srcCurrency === fromCurrency
+              ? amount
+              : Math.round(convertEntry(amount, srcCurrency, fromCurrency, fromRate, eurUsd) * 100) / 100
+          // moneda origen → moneda destino (misma tasa)
+          const rate = entryRate(rates, choice, fromCurrency, toCurrency)
+          const toAmount =
+            Math.round(convertEntry(fromAmount, fromCurrency, toCurrency, rate, eurUsd) * 100) / 100
+          if (
+            !Number.isFinite(fromAmount) || fromAmount <= 0 ||
+            !Number.isFinite(toAmount) || toAmount <= 0 || !Number.isFinite(rate) || rate <= 0
+          ) {
+            results.push({
+              ok: false,
+              kind: 'transfer',
+              message: 'No pude calcular la conversión de monedas para esa transferencia',
+            })
+            continue
+          }
+          // diferencial vs mercado (igual que Cambio de divisa)
+          const marketRateFor = (c: string): number => {
+            const usd = source === 'BCV' ? rates.bcv : source === 'USDT_P2P' ? rates.usdt : rates.paralelo
+            if (c === 'USD') return usd ?? rates.paralelo ?? 1
+            if (c === 'USDT') return rates.usdt ?? usd ?? 1
+            if (c === 'EUR') return usd ? usd * eurUsd : 1
+            return 1
+          }
+          let direction: string
+          let impliedRate: number
+          let marketRate: number
+          let differential: number
+          if (fromCurrency === 'VES' && toCurrency !== 'VES') {
+            direction = 'BUY_FOREIGN'
+            impliedRate = fromAmount / toAmount
+            marketRate = marketRateFor(toCurrency)
+            differential = (marketRate - impliedRate) * toAmount
+          } else if (fromCurrency !== 'VES' && toCurrency === 'VES') {
+            direction = 'SELL_FOREIGN'
+            impliedRate = toAmount / fromAmount
+            marketRate = marketRateFor(fromCurrency)
+            differential = (impliedRate - marketRate) * fromAmount
+          } else {
+            direction = 'FOREIGN_TO_FOREIGN'
+            impliedRate = toAmount / fromAmount
+            marketRate = marketRateFor(fromCurrency) / (marketRateFor(toCurrency) || 1)
+            differential = (impliedRate - marketRate) * fromAmount
+          }
+          await db.currencyExchange.create({
+            data: {
+              fromAccountId: from.id,
+              toAccountId: to.id,
+              fromCurrency,
+              toCurrency,
+              fromAmount,
+              toAmount,
+              direction,
+              impliedRate,
+              marketRate,
+              marketSource: choice,
+              differential,
+              date: safeDate(tr.date),
+              note: tr.description ?? `${from.name} → ${to.name}`,
+            },
+          })
+          const srcLabel = srcCurrency !== fromCurrency ? ` (anotaste ${formatMoney(amount, srcCurrency)})` : ''
           results.push({
-            ok: false,
+            ok: true,
             kind: 'transfer',
-            message: `${from.name} y ${to.name} usan monedas distintas: regístralo como Cambio de divisa`,
+            message: `Transferencia convertida: ${formatMoney(fromAmount, fromCurrency)} de ${from.name} → ${formatMoney(toAmount, toCurrency)} en ${to.name} (queda fijo) · ${RATE_SOURCE_LABEL[source]} ${vesRate(rates, source).toFixed(2)}${srcLabel}`,
           })
           continue
         }
-        const fromCurrency = from.currency as Currency
+
+        // ── Transferencia misma moneda ──────────────────────
 
         // ── Conversión automática (monto en otra moneda) ─────────
         const srcCurrency = (tr.currency ?? detectCurrency(userMessage) ?? fromCurrency) as Currency
@@ -566,6 +670,35 @@ async function executeActions(raw: unknown, userMessage = ''): Promise<ChatActio
             limit,
             currency
           )} por ${cycleLabel}${scope}`,
+        })
+      } else if (action.type === 'create_account') {
+        const a = action.account
+        const name = a.name.trim().slice(0, 40)
+        const existing = await db.account.findMany()
+        const dup = existing.find((x) => norm(x.name) === norm(name))
+        if (dup) {
+          results.push({ ok: false, kind: 'account', message: `Ya tienes la cuenta "${dup.name}" (${dup.currency})` })
+          continue
+        }
+        const nName = norm(name)
+        const isBinance = nName.includes('binance') || nName.includes('usdt') || a.accountType === 'BINANCE'
+        const currency: Currency = a.currency ?? (isBinance ? 'USDT' : 'VES')
+        const accountType = a.accountType ?? (isBinance ? 'BINANCE' : 'BANK')
+        const created = await db.account.create({
+          data: {
+            name,
+            type: accountType,
+            currency,
+            initialBalance: a.initialBalance ?? 0,
+            color: accountType === 'BINANCE' ? '#f0b90b' : accountType === 'CASH' ? '#fb923c' : '#10b981',
+            icon: accountType === 'BINANCE' ? 'bitcoin' : accountType === 'CASH' ? 'banknote' : 'landmark',
+          },
+        })
+        const initialNote = a.initialBalance && a.initialBalance > 0 ? ` · saldo inicial ${formatMoney(a.initialBalance, currency)}` : ''
+        results.push({
+          ok: true,
+          kind: 'account',
+          message: `Cuenta "${created.name}" creada · ${currency === 'VES' ? 'bolívares' : currency === 'USD' ? 'dólares' : currency === 'EUR' ? 'euros' : 'USDT'}${initialNote}`,
         })
       }
     } catch (e) {

@@ -187,6 +187,7 @@ export function SourceBadge({ source }: { source: string }) {
     AI_CHAT: { label: 'IA', color: '#a3e635' },
     VOICE: { label: '🎙️ Voz', color: '#2dd4bf' },
     OCR: { label: '📷 OCR', color: '#f5b544' },
+    IMPORT: { label: '🏦 Banco', color: '#38bdf8' },
   }
   const m = map[source]
   if (!m) return null

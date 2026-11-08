@@ -6,7 +6,7 @@
  *    sin conexión con la última copia de los datos (modo offline)
  *  - POST/PATCH/DELETE /api: siempre red (la cola offline los reintenta)
  */
-const CACHE = 'bolsillo-v2'
+const CACHE = 'bolsillo-v3'
 const PRECACHE = ['/', '/manifest.webmanifest', '/icons/icon-192.png', '/icons/icon-512.png']
 
 self.addEventListener('install', (event) => {
@@ -40,19 +40,28 @@ self.addEventListener('fetch', (event) => {
     event.respondWith(
       fetch(req)
         .then((res) => {
-          const copy = res.clone()
-          caches.open(CACHE).then((c) => c.put(req, copy)).catch(() => {})
+          // solo se cachean respuestas OK: un 401 (candado PIN) o error
+          // cacheado dejaría la app bloqueada al abrir sin conexión
+          if (res.ok) {
+            const copy = res.clone()
+            caches.open(CACHE).then((c) => c.put(req, copy)).catch(() => {})
+          }
           return res
         })
         .catch(() =>
-          caches.match(req).then(
-            (m) =>
-              m ||
-              new Response(JSON.stringify({ error: 'Sin conexión' }), {
-                status: 503,
-                headers: { 'Content-Type': 'application/json' },
-              }),
-          ),
+          caches.match(req).then((m) => {
+            if (m && m.ok) {
+              // servido desde caché: marcarlo para que la app sepa que está
+              // viendo datos guardados (sin conexión real)
+              const headers = new Headers(m.headers)
+              headers.set('X-Bolsillo-Offline', '1')
+              return new Response(m.body, { status: m.status, statusText: m.statusText, headers })
+            }
+            return new Response(JSON.stringify({ error: 'Sin conexión' }), {
+              status: 503,
+              headers: { 'Content-Type': 'application/json', 'X-Bolsillo-Offline': '1' },
+            })
+          }),
         )
     )
     return
@@ -89,4 +98,4 @@ self.addEventListener('fetch', (event) => {
     )
   }
 })
-// v2.1
+// v3 — no cachea respuestas de error (401 PIN) y sirve solo caché OK sin conexión

@@ -14,6 +14,7 @@ import {
   ArrowLeftRight,
   ArrowUpRight,
   Banknote,
+  Bitcoin,
   Bot,
   Camera,
   ChartPie,
@@ -117,10 +118,11 @@ export function BolsilloApp() {
 // Bolsillo es una PWA: sin conexión se abre con la última copia de los
 // datos y los movimientos nuevos se guardan en el teléfono (cola offline).
 // Al reconectar: se envía la cola y se re-sincroniza todo.
+// El aviso SOLO se muestra sin conexión o con movimientos pendientes —
+// con internet y todo sincronizado no estorba.
 
 function OfflineBanner() {
-  const { refreshOverview, refreshMeta } = useAppStore()
-  const [offline, setOffline] = useState(false)
+  const { refreshOverview, refreshMeta, offline, setOffline } = useAppStore()
   const [pending, setPending] = useState(0)
   const [syncing, setSyncing] = useState(false)
 
@@ -141,55 +143,102 @@ function OfflineBanner() {
       refreshOverview().catch(() => {})
       refreshMeta().catch(() => {})
     }
+    // datos servidos desde el caché del Service Worker = sin conexión real
+    const goStale = () => setOffline(true)
+    const goFresh = () => setOffline(false)
     window.addEventListener('offline', goOffline)
     window.addEventListener('online', goOnline)
     window.addEventListener('bolsillo:queued', updatePending)
     window.addEventListener('bolsillo:synced', updatePending)
+    window.addEventListener('bolsillo:syncfail', updatePending)
+    window.addEventListener('bolsillo:stale', goStale)
+    window.addEventListener('bolsillo:fresh', goFresh)
     // sincronizar estado inicial (evita setState síncrono en el efecto)
     const raf = requestAnimationFrame(() => {
       setOffline(!navigator.onLine)
       setPending(queueLength())
     })
+    // reintento periódico: si el teléfono dice "online" pero la red está
+    // caída (WiFi sin internet), volver a intentar cada 30 s
+    const retry = setInterval(() => {
+      if (useAppStore.getState().offline && navigator.onLine) {
+        flushQueue().then(() => {
+          refreshOverview().catch(() => {})
+          refreshMeta().catch(() => {})
+        })
+      }
+    }, 30000)
     return () => {
       window.removeEventListener('offline', goOffline)
       window.removeEventListener('online', goOnline)
       window.removeEventListener('bolsillo:queued', updatePending)
       window.removeEventListener('bolsillo:synced', updatePending)
+      window.removeEventListener('bolsillo:syncfail', updatePending)
+      window.removeEventListener('bolsillo:stale', goStale)
+      window.removeEventListener('bolsillo:fresh', goFresh)
       cancelAnimationFrame(raf)
+      clearInterval(retry)
     }
-  }, [refreshOverview, refreshMeta])
+  }, [refreshOverview, refreshMeta, setOffline])
 
   // intento de sincronización al abrir la app (por si quedó pendiente)
   useEffect(() => {
     if (navigator.onLine && queueLength() > 0) {
-      flushQueue().then((n) => {
-        if (n > 0) {
-          refreshOverview().catch(() => {})
-          refreshMeta().catch(() => {})
-        }
+      setSyncing(true)
+      flushQueue().finally(() => {
+        setSyncing(false)
+        refreshOverview().catch(() => {})
+        refreshMeta().catch(() => {})
       })
     }
-  }, [])
+  }, [refreshOverview, refreshMeta])
 
+  // con internet y nada pendiente: no mostrar nada
+  if (!offline && pending === 0 && !syncing) return null
+
+  const enviando = syncing && !offline
   return (
     <div role="status" aria-live="polite" className="px-4 sm:px-6 pt-2">
-      <div className="flex items-center gap-3 rounded-2xl border border-amber-400/25 bg-amber-400/10 px-4 py-3 text-amber-200">
-        {syncing ? <RefreshCw size={18} className="shrink-0 animate-spin" aria-hidden /> : <WifiOff size={18} className="shrink-0" aria-hidden />}
+      <div
+        className={cn(
+          'flex items-center gap-3 rounded-2xl border px-4 py-2.5',
+          enviando
+            ? 'border-emerald-400/25 bg-emerald-400/10 text-emerald-200'
+            : 'border-amber-400/25 bg-amber-400/10 text-amber-200'
+        )}
+      >
+        {enviando ? (
+          <RefreshCw size={17} className="shrink-0 animate-spin" aria-hidden />
+        ) : (
+          <WifiOff size={17} className="shrink-0" aria-hidden />
+        )}
         <div className="min-w-0">
           <p className="text-sm font-semibold leading-tight">
-            {syncing ? 'Enviando…' : 'Sin conexión'}
+            {enviando ? 'Enviando…' : 'Sin conexión'}
             {pending > 0 && (
-              <span className="ml-2 rounded-full bg-amber-400/20 px-2 py-0.5 text-[10px] font-bold">
+              <span
+                className={cn(
+                  'ml-2 rounded-full px-2 py-0.5 text-[10px] font-bold',
+                  enviando ? 'bg-emerald-400/20' : 'bg-amber-400/20'
+                )}
+              >
                 ⏳ {pending} en espera
               </span>
             )}
           </p>
-          <p className="text-[11px] leading-snug text-amber-200/70 mt-0.5">
-            {pending > 0
-              ? 'Tus movimientos nuevos se guardaron en el teléfono. Se envían solos al reconectar.'
-              : syncing
-                ? 'Enviando los movimientos pendientes…'
-                : 'Puedes seguir anotando movimientos: se guardarán en el teléfono y se enviarán al reconectar.'}
+          <p
+            className={cn(
+              'text-[11px] leading-snug mt-0.5',
+              enviando ? 'text-emerald-200/70' : 'text-amber-200/70'
+            )}
+          >
+            {enviando
+              ? 'Enviando los movimientos pendientes…'
+              : offline
+                ? pending > 0
+                  ? 'Tus movimientos nuevos se guardaron en el teléfono. Se envían solos al reconectar.'
+                  : 'Puedes seguir anotando movimientos: se guardarán en el teléfono y se enviarán al reconectar.'
+                : 'Hay movimientos en espera que no se pudieron enviar todavía. Sigo intentando solo.'}
           </p>
         </div>
       </div>
@@ -384,6 +433,7 @@ export function QuickAdd({ floating = false }: { floating?: boolean }) {
   }
 
   const defaultBsAccount = accounts.find((a) => a.currency === 'VES') ?? accounts[0]
+  const binanceAccount = accounts.find((a) => a.type === 'BINANCE') ?? accounts.find((a) => a.currency === 'USDT')
 
   const options = [
     {
@@ -398,6 +448,17 @@ export function QuickAdd({ floating = false }: { floating?: boolean }) {
       desc: 'Registrar un ingreso',
       action: () => openTxDialog({ prefill: { type: 'INCOME' } }),
     },
+    ...(binanceAccount
+      ? [
+          {
+            icon: <Bitcoin size={19} className="text-[#f0b90b]" />,
+            title: 'A Binance 🟡',
+            desc: 'Convierte Bs o $ y se fija en USDT',
+            action: () =>
+              openTxDialog({ prefill: { type: 'TRANSFER', toAccountId: binanceAccount.id } }),
+          },
+        ]
+      : []),
     {
       icon: <Camera size={19} className="text-amber-400" />,
       title: 'Escanear comprobante',

@@ -131,9 +131,11 @@ export function TransactionDialog() {
   const account = accounts.find((a) => a.id === accountId)
   const currency: Currency = (account?.currency ?? 'VES') as Currency
   const toAccount = accounts.find((a) => a.id === toAccountId)
-  const sameCurrencyAccounts = accounts.filter(
-    (a) => a.currency === currency && a.id !== accountId
-  )
+  const toCurrency: Currency = (toAccount?.currency ?? 'VES') as Currency
+  const otherAccounts = accounts.filter((a) => a.id !== accountId)
+  // transferencia entre monedas distintas: se convierte con la tasa del día
+  // (ej: Bs de Mercantil → USDT de Binance, queda FIJO en USDT)
+  const crossTransfer = type === 'TRANSFER' && !!toAccount && account != null && account.currency !== toAccount.currency
   const kindCategories = categories.filter((c) =>
     type === 'INCOME' ? c.kind === 'INCOME' : c.kind === 'EXPENSE'
   )
@@ -160,14 +162,36 @@ export function TransactionDialog() {
       : null
   const finalAmount = convertedAmount ?? (Number.isFinite(amountNum) ? amountNum : NaN)
 
+  // ── Transferencia entre monedas distintas ─────────────────
+  // La misma tasa elegida rige la conversión; el monto queda FIJO en la
+  // moneda de la cuenta destino (como hace Binance P2P).
+  const customRateNumX = rateChoice === 'MANUAL' ? parseAmount(customRate) : NaN
+  const crossRate = crossTransfer && rates
+    ? entryRate(
+        rates,
+        rateChoice,
+        currency,
+        toCurrency,
+        rateChoice === 'MANUAL' && Number.isFinite(customRateNumX) && customRateNumX > 0
+          ? customRateNumX
+          : null
+      )
+    : 0
+  const crossOk = !crossTransfer || crossRate > 0
+  const crossToAmount =
+    crossTransfer && crossOk && Number.isFinite(finalAmount) && finalAmount > 0
+      ? Math.round(convertEntry(finalAmount, currency, toCurrency, crossRate, rates?.eurUsd ?? 1.16) * 100) / 100
+      : null
+
   const valid =
     Number.isFinite(amountNum) &&
     amountNum > 0 &&
     Number.isFinite(finalAmount) &&
     finalAmount > 0 &&
     rateOk &&
+    crossOk &&
     accountId &&
-    (type !== 'TRANSFER' || (toAccountId && toAccount && toAccount.currency === currency))
+    (type !== 'TRANSFER' || (toAccountId && toAccount && (toAccount.currency === currency || (crossOk && crossToAmount != null && crossToAmount > 0))))
 
   const toggleTag = (id: string) =>
     setTagIds((prev) => (prev.includes(id) ? prev.filter((t) => t !== id) : [...prev, id]))
@@ -176,6 +200,27 @@ export function TransactionDialog() {
     if (!valid || saving) return
     setSaving(true)
     try {
+      // transferencia entre monedas distintas → cambio de divisa (queda fijo
+      // en la moneda destino, ej: Bs → USDT Binance)
+      if (crossTransfer && crossToAmount != null) {
+        await api.createExchange({
+          fromAccountId: accountId,
+          toAccountId,
+          fromAmount: finalAmount,
+          toAmount: crossToAmount,
+          marketSource: rateChoice,
+          note:
+            description.trim() ||
+            `${account?.name} → ${toAccount?.name}${toAccount?.type === 'BINANCE' ? ' (Binance)' : ''}`,
+        })
+        toast({
+          title: 'Enviado y convertido ✓',
+          description: `${formatMoney(finalAmount, currency)} → ${formatMoney(crossToAmount, toCurrency)} (queda fijo en ${CURRENCY_META[toCurrency].short})`,
+        })
+        closeTxDialog()
+        if (navigator.onLine) await Promise.all([refreshOverview(), refreshMeta()])
+        return
+      }
       const payload: Record<string, unknown> = {
         type,
         amount: amountNum, // en la moneda en la que se ingresó
@@ -261,7 +306,7 @@ export function TransactionDialog() {
           </DialogTitle>
           <DialogDescription>
             {type === 'TRANSFER'
-              ? 'Mueve dinero entre cuentas de la misma moneda.'
+              ? 'Mueve dinero entre tus cuentas. Si usan monedas distintas, se convierte con la tasa del día y queda fijo en la moneda destino.'
               : `Anota en cualquier moneda: se convierte automáticamente al saldo de la cuenta (${CURRENCY_META[currency].short}).`}
           </DialogDescription>
         </DialogHeader>
@@ -388,6 +433,71 @@ export function TransactionDialog() {
           </div>
         )}
 
+        {/* transferencia entre monedas: conversión y monto fijado */}
+        {crossTransfer && (
+          <div className="space-y-2 rounded-xl border border-[#f0b90b]/25 bg-[#f0b90b]/5 p-3">
+            <p className="text-xs text-muted-foreground">
+              Se convierte a <span className="font-semibold text-[#f0b90b]">{CURRENCY_META[toCurrency].label}</span>{' '}
+              {toAccount?.type === 'BINANCE' && '(Binance 🟡)'} y queda <span className="font-semibold">fijo</span> con la tasa:
+            </p>
+            {!needsConversion && (
+              <div className="grid grid-cols-4 gap-1.5">
+                {RATE_CHOICES.map((rc) => (
+                  <button
+                    key={rc}
+                    type="button"
+                    onClick={() => setRateChoice(rc)}
+                    aria-pressed={rateChoice === rc}
+                    title={RATE_CHOICE_META[rc].hint}
+                    className={cn(
+                      'rounded-lg border py-1.5 text-xs font-semibold transition-all',
+                      rateChoice === rc
+                        ? 'border-amber-400/50 bg-amber-400/10 text-amber-300'
+                        : 'border-white/10 text-muted-foreground hover:text-foreground'
+                    )}
+                  >
+                    {RATE_CHOICE_META[rc].label}
+                  </button>
+                ))}
+              </div>
+            )}
+            {rateChoice === 'MANUAL' && !needsConversion && (
+              <div>
+                <label className="text-xs text-muted-foreground mb-1 block">
+                  Tasa en Bs por 1{' '}
+                  {CURRENCY_META[currency !== 'VES' ? currency : toCurrency !== 'VES' ? toCurrency : 'USD'].short}
+                </label>
+                <Input
+                  inputMode="decimal"
+                  placeholder="Ej: 889,26"
+                  value={customRate}
+                  onChange={(e) => setCustomRate(e.target.value)}
+                  className="tnum border-white/10 bg-secondary/40"
+                />
+              </div>
+            )}
+            {crossOk && crossToAmount != null ? (
+              <p className="tnum flex items-center gap-1.5 text-xs text-muted-foreground flex-wrap">
+                <span className="font-semibold text-foreground">{formatMoney(finalAmount, currency)}</span>
+                <span className="text-foreground/60">de {account?.name}</span>
+                <ArrowRight size={12} className="text-[#f0b90b]" />
+                <span className="font-semibold text-[#f0b90b]">{formatMoney(crossToAmount, toCurrency)}</span>
+                <span className="text-foreground/60">en {toAccount?.name}</span>
+                <span className="ml-auto">
+                  {rateChoice === 'MANUAL' ? 'tasa propia' : RATE_CHOICE_META[rateChoice].label}{' '}
+                  {formatRate(crossRate)}
+                </span>
+              </p>
+            ) : (
+              <p className="text-xs text-rose-300">
+                {rateChoice === 'MANUAL'
+                  ? 'Escribe la tasa para convertir'
+                  : 'No hay tasa disponible ahora, usa “Tasa propia”'}
+              </p>
+            )}
+          </div>
+        )}
+
         {/* cuentas */}
         <div className="grid grid-cols-2 gap-3">
           <div>
@@ -426,9 +536,12 @@ export function TransactionDialog() {
                   <SelectValue placeholder="Destino" />
                 </SelectTrigger>
                 <SelectContent>
-                  {sameCurrencyAccounts.map((a) => (
+                  {otherAccounts.map((a) => (
                     <SelectItem key={a.id} value={a.id}>
-                      {a.name}
+                      <span className="flex items-center gap-2">
+                        {a.type === 'BINANCE' ? '🟡 ' : ''}
+                        {a.name} ({a.currency})
+                      </span>
                     </SelectItem>
                   ))}
                 </SelectContent>

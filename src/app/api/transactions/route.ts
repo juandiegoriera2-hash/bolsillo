@@ -26,7 +26,7 @@ export async function GET(req: Request) {
     if (type && ['EXPENSE', 'INCOME', 'TRANSFER'].includes(type)) where.type = type
     if (accountId) where.accountId = accountId
     if (categoryId) where.categoryId = categoryId
-    if (source && ['MANUAL', 'AI_CHAT', 'VOICE', 'OCR'].includes(source)) where.source = source
+    if (source && ['MANUAL', 'AI_CHAT', 'VOICE', 'OCR', 'IMPORT'].includes(source)) where.source = source
     if (tagId) where.tags = { some: { tagId } }
     if (from || to) {
       where.date = {

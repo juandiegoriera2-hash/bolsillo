@@ -212,7 +212,17 @@ export type OverviewDTO = {
   settings: { baseCurrency: 'USD' | 'VES'; valuationSource: 'BCV' | 'PARALELO' | 'USDT_P2P' }
   rates: RateSnapshot
   history: RateHistoryPoint[]
-  netWorth: { totalUsd: number; totalVes: number; byCurrency: Record<string, number> }
+  netWorth: {
+    totalUsd: number
+    totalVes: number
+    byCurrency: Record<string, number>
+    /** Patrimonio Binance USDT (cuenta fija) — mostrado aparte */
+    binanceUsdt: number
+    binanceUsd: number
+    /** Patrimonio en el resto de cuentas (bancos, efectivo, billeteras) */
+    accountsUsd: number
+    accountsVes: number
+  }
   accounts: AccountDTO[]
   recent: TxDTO[]
   budgets: BudgetDTO[]
