@@ -50,6 +50,10 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="es" className="dark" suppressHydrationWarning>
+      <head>
+        {/* iOS legado (<15.4): necesario para que abra sin barra de Safari */}
+        <meta name="apple-mobile-web-app-capable" content="yes" />
+      </head>
       <body
         className={`${geistSans.variable} ${geistMono.variable} antialiased bg-background text-foreground`}
       >
