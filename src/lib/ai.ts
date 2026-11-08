@@ -29,7 +29,7 @@ function resetZai(): void {
 }
 
 // ── Proveedor OpenAI-compatible (opcional, producción) ───────────
-type OpenAiCfg = { base: string; key: string; model: string; visionModel: string }
+type OpenAiCfg = { base: string; key: string; model: string[]; visionModel: string[] }
 
 function openAiConfig(): OpenAiCfg | null {
   const base = process.env.AI_BASE_URL
@@ -38,22 +38,57 @@ function openAiConfig(): OpenAiCfg | null {
   return {
     base: base.replace(/\/+$/, ''),
     key,
-    model: process.env.AI_MODEL || 'gpt-4o-mini',
-    visionModel: process.env.AI_VISION_MODEL || process.env.AI_MODEL || 'gpt-4o-mini',
+    model: modelList(process.env.AI_MODEL).length ? modelList(process.env.AI_MODEL) : modelList(DEFAULT_MODELS),
+    visionModel: modelList(process.env.AI_VISION_MODEL).length
+      ? modelList(process.env.AI_VISION_MODEL)
+      : modelList(process.env.AI_MODEL).length
+        ? modelList(process.env.AI_MODEL)
+        : modelList(DEFAULT_MODELS),
   }
 }
 
-async function openAiChat(messages: unknown[], model: string, cfg: OpenAiCfg): Promise<string> {
-  const res = await fetch(`${cfg.base}/chat/completions`, {
+async function openAiChatOnce(messages: unknown[], model: string, cfg: OpenAiCfg): Promise<Response> {
+  return fetch(`${cfg.base}/chat/completions`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${cfg.key}` },
     body: JSON.stringify({ model, messages }),
   })
-  if (!res.ok) {
-    throw new Error(`IA: el proveedor respondió ${res.status}. Revisa AI_MODEL / la clave en Vercel.`)
+}
+
+/** Modelo(s): AI_MODEL puede ser una lista separada por comas — se prueban
+ *  en orden y si uno falla con 429 (saturado) o 404 (retirado) se salta al
+ *  siguiente. El error del último intento es el que se reporta. */
+function modelList(raw: string | undefined): string[] {
+  return (raw || '')
+    .split(',')
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0)
+}
+
+const DEFAULT_MODELS = 'gpt-4o-mini'
+
+async function openAiChat(messages: unknown[], models: string[], cfg: OpenAiCfg): Promise<string> {
+  let lastErr = 'sin modelos configurados'
+  for (const model of models) {
+    try {
+      const res = await openAiChatOnce(messages, model, cfg)
+      if (res.ok) {
+        const json = (await res.json()) as any
+        return json?.choices?.[0]?.message?.content ?? ''
+      }
+      if (res.status === 429 || res.status === 404 || res.status === 400) {
+        // este modelo está saturado o ya no existe: probar el siguiente
+        lastErr = `el modelo «${model}» respondió ${res.status}`
+        continue
+      }
+      // error de clave u otro: abortar (no tiene sentido seguir)
+      throw new Error(`IA: el proveedor respondió ${res.status}. Revisa AI_API_KEY / AI_BASE_URL en Vercel.`)
+    } catch (e) {
+      lastErr = e instanceof Error ? e.message : String(e)
+    }
   }
-  const json = (await res.json()) as any
-  return json?.choices?.[0]?.message?.content ?? ''
+  throw new Error(`IA: ningún modelo respondió (${lastErr}). Revisa AI_MODEL en Vercel — puedes poner varios separados por coma.`
+  )
 }
 
 export const NO_AI_MSG =
