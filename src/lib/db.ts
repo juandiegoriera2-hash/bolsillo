@@ -9,8 +9,9 @@ import { createClient } from '@libsql/client'
 import { PrismaLibSQL } from '@prisma/adapter-libsql'
 
 function createDb(): PrismaClient {
-  const url = process.env.TURSO_DATABASE_URL
-  const token = process.env.TURSO_AUTH_TOKEN
+  // Acepta ambos conjuntos de nombres (TURSO_* o DATABASE_*)
+  const url = process.env.TURSO_DATABASE_URL ?? process.env.DATABASE_URL
+  const token = process.env.TURSO_AUTH_TOKEN ?? process.env.DATABASE_AUTH_TOKEN
   if (url && token && url.startsWith('libsql')) {
     return new PrismaClient({
       adapter: new PrismaLibSQL(createClient({ url, authToken: token })),
