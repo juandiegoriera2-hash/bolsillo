@@ -94,7 +94,7 @@ export function DebtsView() {
           <p className="text-[11px] text-muted-foreground">
             {tab === 'POR_PAGAR' ? 'Total que debes' : 'Total que te deben'}
           </p>
-          <p className="tnum text-2xl font-bold">${totalUsd.toFixed(2)}</p>
+          <p className="tnum text-2xl font-bold">{formatMoney(totalUsd, 'USD', true)}</p>
         </div>
         <Button
           onClick={() => setDialog({ open: true, edit: null })}
@@ -160,7 +160,7 @@ export function DebtsView() {
                   </div>
                   <div className="flex flex-col items-end gap-1.5">
                     <CurrencyBadge currency={d.currency} />
-                    <span className="text-[11px] text-muted-foreground">≈ ${toUsd(d.remaining, d.currency).toFixed(2)}</span>
+                    <span className="text-[11px] text-muted-foreground">≈ {formatMoney(toUsd(d.remaining, d.currency), 'USD', true)}</span>
                   </div>
                 </div>
 

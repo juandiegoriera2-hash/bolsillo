@@ -161,8 +161,10 @@ export function DashboardView() {
                 Ver en {showBs ? 'dólares' : 'bolívares'}
               </button>
               <span className="text-xs text-muted-foreground">
-                ≈ {formatMoney(overview.netWorth.totalUsd, 'USD', false)} · Bs{' '}
-                {formatMoney(overview.netWorth.totalVes, 'VES', false)}
+                ≈{' '}
+                {showBs
+                  ? formatMoney(overview.netWorth.totalUsd, 'USD', false)
+                  : formatMoney(overview.netWorth.totalVes, 'VES', false)}
               </span>
             </div>
           </div>
@@ -338,7 +340,7 @@ export function DashboardView() {
                             className="w-2 h-2 rounded-full"
                             style={{ backgroundColor: p.name === 'gasto' ? '#fb7185' : '#38e07f' }}
                           />
-                          {p.name === 'gasto' ? 'Gasto' : 'Ingreso'}: ${Number(p.value).toFixed(2)}
+                          {p.name === 'gasto' ? 'Gasto' : 'Ingreso'}: {formatMoney(Number(p.value), 'USD', true)}
                         </p>
                       ))}
                     </div>
@@ -355,7 +357,7 @@ export function DashboardView() {
             <p className="text-[11px] text-muted-foreground flex items-center gap-1">
               <TrendingDown size={12} className="text-rose-400" /> Gasto esta semana
             </p>
-            <p className="tnum font-bold text-lg">${weekExpense.toFixed(2)}</p>
+            <p className="tnum font-bold text-lg">{formatMoney(weekExpense, 'USD', true)}</p>
             {weekDelta != null && (
               <p className={cn('text-[11px] tnum', weekDelta > 0 ? 'text-rose-400' : 'text-emerald-400')}>
                 {weekDelta > 0 ? '▲' : '▼'} {Math.abs(weekDelta).toFixed(0)}% vs semana anterior
@@ -366,9 +368,9 @@ export function DashboardView() {
             <p className="text-[11px] text-muted-foreground flex items-center gap-1">
               <TrendingUp size={12} className="text-emerald-400" /> Ingreso esta semana
             </p>
-            <p className="tnum font-bold text-lg">${(overview.week.incomeUsd ?? 0).toFixed(2)}</p>
+            <p className="tnum font-bold text-lg">{formatMoney((overview.week.incomeUsd ?? 0), 'USD', true)}</p>
             <p className="text-[11px] text-muted-foreground tnum">
-              Hormiga (30d): ${overview.hormiga30.totalUsd.toFixed(2)}
+              Hormiga (30d): {formatMoney(overview.hormiga30.totalUsd, 'USD', true)}
             </p>
           </div>
         </div>
@@ -399,7 +401,8 @@ export function DashboardView() {
                     <CurrencyBadge currency={b.currency} />
                   </div>
                   <span className={cn('tnum text-sm font-semibold', b.pct >= 100 ? 'text-rose-400' : 'text-foreground/85')}>
-                    ${b.spent.toFixed(0)} / ${b.limitAmount.toFixed(0)}
+                    {formatMoney(b.spent, b.currency as Currency, false)} /{' '}
+                    {formatMoney(b.limitAmount, b.currency as Currency, false)}
                   </span>
                 </div>
                 <BudgetBar pct={b.pct} />
@@ -433,7 +436,7 @@ export function DashboardView() {
             )}
           </div>
           <p className="tnum text-xl font-bold">
-            ${porPagar.reduce((s, d) => s + debtUsd(d), 0).toFixed(0)}
+            {formatMoney(porPagar.reduce((s, d) => s + debtUsd(d), 0), 'USD', false)}
           </p>
           <p className="text-[11px] text-muted-foreground">{porPagar.length} deuda(s) pendiente(s)</p>
         </button>
@@ -448,7 +451,7 @@ export function DashboardView() {
             <p className="text-sm font-semibold">Por cobrar</p>
           </div>
           <p className="tnum text-xl font-bold">
-            ${porCobrar.reduce((s, d) => s + debtUsd(d), 0).toFixed(0)}
+            {formatMoney(porCobrar.reduce((s, d) => s + debtUsd(d), 0), 'USD', false)}
           </p>
           <p className="text-[11px] text-muted-foreground">{porCobrar.length} cobro(s) pendiente(s)</p>
         </button>
@@ -480,7 +483,8 @@ export function DashboardView() {
                 </div>
                 <BudgetBar pct={g.pct} />
                 <p className="text-[11px] text-muted-foreground tnum mt-1.5">
-                  ${g.saved.toFixed(0)} de ${g.targetAmount.toFixed(0)} {g.currency}
+                  {formatMoney(g.saved, g.currency as Currency, false)} de{' '}
+                  {formatMoney(g.targetAmount, g.currency as Currency, false)}
                 </p>
               </button>
             ))}
@@ -514,7 +518,7 @@ export function DashboardView() {
                       active && payload?.length ? (
                         <div className="glass rounded-xl px-3 py-2 text-xs shadow-xl">
                           <p className="font-semibold">{payload[0].name}</p>
-                          <p className="tnum">${Number(payload[0].value).toFixed(2)}</p>
+                          <p className="tnum">{formatMoney(Number(payload[0].value), 'USD', true)}</p>
                         </div>
                       ) : null
                     }
@@ -527,7 +531,7 @@ export function DashboardView() {
                 <div key={d.name} className="flex items-center gap-2 text-xs">
                   <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: d.color }} />
                   <span className="truncate flex-1 text-foreground/80">{d.name}</span>
-                  <span className="tnum text-muted-foreground">${d.value.toFixed(0)}</span>
+                  <span className="tnum text-muted-foreground">{formatMoney(d.value, 'USD', false)}</span>
                 </div>
               ))}
             </div>

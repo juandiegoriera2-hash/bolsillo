@@ -243,10 +243,10 @@ export function TransactionsView() {
       {/* resumen del filtro */}
       <div className="flex items-center gap-2 mb-3 text-xs">
         <Badge variant="outline" className="border-emerald-400/30 text-emerald-300 tnum">
-          ↘ ${sums.expenseUsd.toFixed(2)} gastos
+          ↘ {formatMoney(sums.expenseUsd, 'USD', true)} gastos
         </Badge>
         <Badge variant="outline" className="border-rose-400/30 text-rose-300 tnum">
-          ↗ ${sums.incomeUsd.toFixed(2)} ingresos
+          ↗ {formatMoney(sums.incomeUsd, 'USD', true)} ingresos
         </Badge>
         {hasFilters && (
           <button

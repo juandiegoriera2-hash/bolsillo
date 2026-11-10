@@ -14,6 +14,8 @@ type InstallPromptEvent = Event & { prompt: () => Promise<void> }
 
 const OVERVIEW_CACHE_KEY = 'bolsillo.overview.v1'
 
+let overviewInflight = false
+
 function saveOverviewCache(o: OverviewDTO) {
   try {
     localStorage.setItem(OVERVIEW_CACHE_KEY, JSON.stringify(o))
@@ -62,11 +64,14 @@ export const useAppStore = create<AppState>((set, get) => ({
   setView: (v) => set({ view: v }),
 
   overview: null,
-  loadingOverview: false,
+  // true until the first fetch settles, so the first paint shows skeletons
+  // instead of the "couldn't load" error state
+  loadingOverview: true,
   offline: false,
   setOffline: (v) => set({ offline: v }),
   refreshOverview: async () => {
-    if (get().loadingOverview) return
+    if (overviewInflight) return
+    overviewInflight = true
     set({ loadingOverview: true })
     try {
       const overview = await api.overview()
@@ -85,6 +90,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         throw e
       }
     } finally {
+      overviewInflight = false
       set({ loadingOverview: false })
     }
   },

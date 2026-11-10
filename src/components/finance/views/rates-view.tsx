@@ -254,16 +254,16 @@ export function RatesView() {
           <div className="grid grid-cols-3 gap-3 mb-3">
             <div className="glass rounded-xl p-3 text-center">
               <p className="text-[10px] uppercase tracking-wider text-emerald-400 font-semibold">Ganado</p>
-              <p className="tnum font-bold text-emerald-400">${exchanges.gainedUsd.toFixed(2)}</p>
+              <p className="tnum font-bold text-emerald-400">{formatMoney(exchanges.gainedUsd, 'USD', true)}</p>
             </div>
             <div className="glass rounded-xl p-3 text-center">
               <p className="text-[10px] uppercase tracking-wider text-rose-400 font-semibold">Perdido</p>
-              <p className="tnum font-bold text-rose-400">${exchanges.lostUsd.toFixed(2)}</p>
+              <p className="tnum font-bold text-rose-400">{formatMoney(exchanges.lostUsd, 'USD', true)}</p>
             </div>
             <div className="glass rounded-xl p-3 text-center">
               <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">Neto</p>
               <p className={cn('tnum font-bold', exchanges.netUsd >= 0 ? 'text-emerald-400' : 'text-rose-400')}>
-                ${exchanges.netUsd.toFixed(2)}
+                {formatMoney(exchanges.netUsd, 'USD', true)}
               </p>
             </div>
           </div>
@@ -327,7 +327,7 @@ export function RatesView() {
                     <span>
                       Mercado: <span className="text-foreground/85">{bsInvolved ? formatRate(e.marketRate) : e.marketRate.toFixed(3)}</span>
                     </span>
-                    <span className="ml-auto">≈ ${Math.abs(e.differentialUsd).toFixed(2)}</span>
+                    <span className="ml-auto">≈ {formatMoney(Math.abs(e.differentialUsd), 'USD', true)}</span>
                   </div>
                 </div>
               )

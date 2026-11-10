@@ -6,6 +6,7 @@
 // La instancia se crea LAZY (en la primera consulta) para que el
 // build de Vercel nunca intente conectarse a la base de datos.
 // ─────────────────────────────────────────────────────────────────
+import path from 'node:path'
 import { PrismaClient } from '@prisma/client'
 import { PrismaLibSQL } from '@prisma/adapter-libsql'
 
@@ -30,7 +31,11 @@ function createDb(): PrismaClient {
       log: ['error'],
     })
   }
-  return new PrismaClient({ log: ['error'] })
+  // Sin DATABASE_URL, usa SQLite local en db/custom.db para que la app
+  // arranque sin configuración (antes fallaba con "Environment variable not found").
+  const datasourceUrl =
+    process.env.DATABASE_URL || `file:${path.join(process.cwd(), 'db', 'custom.db')}`
+  return new PrismaClient({ datasourceUrl, log: ['error'] })
 }
 
 const globalForPrisma = globalThis as unknown as {

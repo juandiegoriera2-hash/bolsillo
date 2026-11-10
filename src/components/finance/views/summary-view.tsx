@@ -1,5 +1,7 @@
 'use client'
 
+import { formatMoney } from '@/lib/finance'
+
 import { useEffect, useState } from 'react'
 import { api } from '../api'
 import { useAppStore } from '../store'
@@ -60,19 +62,19 @@ export function SummaryView() {
         <div className="grid grid-cols-3 gap-3 mb-5">
           <div className="glass rounded-2xl p-4">
             <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">Gasto 7d</p>
-            <p className="tnum text-xl font-bold">${analytics.expenseUsd.toFixed(0)}</p>
+            <p className="tnum text-xl font-bold">{formatMoney(analytics.expenseUsd, 'USD', false)}</p>
             <p className="text-[10px] text-muted-foreground tnum">
-              vs ${analytics.prevExpenseUsd.toFixed(0)} sem. previa
+              vs {formatMoney(analytics.prevExpenseUsd, 'USD', false)} sem. previa
             </p>
           </div>
           <div className="glass rounded-2xl p-4">
             <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">Ingreso 7d</p>
-            <p className="tnum text-xl font-bold text-emerald-300">${analytics.incomeUsd.toFixed(0)}</p>
+            <p className="tnum text-xl font-bold text-emerald-300">{formatMoney(analytics.incomeUsd, 'USD', false)}</p>
             <p className="text-[10px] text-muted-foreground tnum">{analytics.txCount} movimientos</p>
           </div>
           <div className="glass rounded-2xl p-4">
             <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">🐜 Hormiga</p>
-            <p className="tnum text-xl font-bold text-rose-300">${analytics.gastosHormiga.totalUsd.toFixed(0)}</p>
+            <p className="tnum text-xl font-bold text-rose-300">{formatMoney(analytics.gastosHormiga.totalUsd, 'USD', false)}</p>
             <p className="text-[10px] text-muted-foreground tnum">{analytics.gastosHormiga.count} pequeños gastos</p>
           </div>
         </div>
@@ -80,7 +82,7 @@ export function SummaryView() {
 
       {topCat && (
         <p className="text-xs text-muted-foreground mb-4 px-1">
-          Categoría dominante: <span style={{ color: topCat.color }}>{topCat.name}</span> (${topCat.totalUsd.toFixed(0)} esta semana)
+          Categoría dominante: <span style={{ color: topCat.color }}>{topCat.name}</span> ({formatMoney(topCat.totalUsd, 'USD', false)} esta semana)
         </p>
       )}
 

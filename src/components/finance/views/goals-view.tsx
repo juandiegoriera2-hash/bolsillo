@@ -59,7 +59,7 @@ export function GoalsView() {
       <div className="flex items-center justify-between mb-4">
         <div>
           <p className="text-[11px] text-muted-foreground">Total ahorrado</p>
-          <p className="tnum text-2xl font-bold text-emerald-300">${totalSaved.toFixed(2)}</p>
+          <p className="tnum text-2xl font-bold text-emerald-300">{formatMoney(totalSaved, 'USD', true)}</p>
         </div>
         <Button onClick={() => setDialog({ open: true, edit: null })} className="bg-emerald-400 text-emerald-950 hover:bg-emerald-300 font-semibold">
           <Plus size={15} className="mr-1" /> Nueva meta

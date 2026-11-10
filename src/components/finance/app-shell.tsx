@@ -3,7 +3,7 @@
 // ─────────────────────────────────────────────────────────────────
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useSyncExternalStore } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import { useAppStore } from './store'
 import { TransactionDialog } from './transaction-dialog'
@@ -59,7 +59,28 @@ import { SummaryView } from './views/summary-view'
 import { SettingsView } from './views/settings-view'
 import { MoreView } from './views/more-view'
 
+const noopSubscribe = () => () => {}
+
+// The app is driven entirely by client data (API + offline cache), so it is
+// rendered only on the client; this also avoids Radix id hydration mismatches.
 export function BolsilloApp() {
+  const isClient = useSyncExternalStore(noopSubscribe, () => true, () => false)
+  if (!isClient) return <AppSplash />
+  return <BolsilloAppInner />
+}
+
+function AppSplash() {
+  return (
+    <div className="min-h-dvh flex items-center justify-center bg-background" aria-busy="true">
+      <div className="flex flex-col items-center gap-3 animate-pulse">
+        <Logo />
+        <span className="sr-only">Cargando Bolsillo…</span>
+      </div>
+    </div>
+  )
+}
+
+function BolsilloAppInner() {
   const { view, refreshOverview, refreshMeta, setInstallEvent } = useAppStore()
 
   // arranque: datos + registro del service worker + prompt de instalación
